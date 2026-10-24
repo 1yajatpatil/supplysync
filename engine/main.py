@@ -2,12 +2,13 @@
 SupplySync FastAPI Service
 Main application exposing REST endpoints for FMCG master data, demand forecasting,
 baseline distribution allocation, constrained OR-Tools optimization, plan comparison, and CSV export.
+Supports both Synthetic FMCG Demo dataset and Real M5 Kaggle Dataset.
 """
 
 import io
 import csv
 from typing import List, Dict, Optional, Any
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -29,7 +30,15 @@ from .demo_data import (
     get_demo_routes,
     get_demo_demand_records
 )
-from .demand import evaluate_forecasting_models
+from .m5_loader import get_m5_status, M5DataLoader
+from .m5_logistics import (
+    get_m5_products,
+    get_m5_destinations,
+    get_m5_warehouses,
+    get_m5_routes,
+    get_m5_inventory_batches
+)
+from .demand import evaluate_forecasting_models, generate_forecasted_demand_records
 from .baseline import run_baseline_allocation
 from .optimizer import run_ortools_optimization
 from .validator import validate_plan_invariants
@@ -38,7 +47,7 @@ from .comparator import compare_plans
 app = FastAPI(
     title="SupplySync Engine",
     description="FMCG Distribution Intelligence & Constrained Inventory Optimization Service",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 # Enable CORS for local client and API gateway
@@ -54,29 +63,81 @@ app.add_middleware(
 RUNS_STORE: Dict[str, OptimizationPlan] = {}
 
 
+def get_dataset_bundle(data_source: str = "synthetic", horizon_days: int = 7):
+    """
+    Retrieves the complete data network for the specified data source and planning horizon.
+    Generates genuine demand forecasts scaled to the requested horizon (7D, 14D, 30D).
+    """
+    if data_source == "m5":
+        loader = M5DataLoader()
+        products = get_m5_products(loader)
+        destinations = get_m5_destinations(loader)
+        warehouses = get_m5_warehouses()
+        routes = get_m5_routes(destinations, warehouses)
+        batches = get_m5_inventory_batches(products, warehouses)
+        demand = generate_forecasted_demand_records(
+            products=products,
+            destinations=destinations,
+            horizon_days=horizon_days,
+            data_source="m5"
+        )
+        return products, warehouses, destinations, batches, routes, demand
+    else:
+        products = get_demo_products()
+        warehouses = get_demo_warehouses()
+        destinations = get_demo_destinations()
+        batches = get_demo_inventory_batches()
+        routes = get_demo_routes()
+        # Scale demand forecasts according to planning horizon
+        demand = generate_forecasted_demand_records(
+            products=products,
+            destinations=destinations,
+            horizon_days=horizon_days,
+            data_source="synthetic"
+        )
+        return products, warehouses, destinations, batches, routes, demand
+
+
 @app.get("/health")
 def health_check():
+    m5_info = get_m5_status()
     return {
         "status": "healthy",
         "service": "SupplySync Optimization & Forecasting Engine",
         "solver": "Google OR-Tools SCIP MILP",
-        "version": "1.0.0"
+        "m5_available": m5_info.get("available", False),
+        "m5_source": m5_info.get("active_source", "none"),
+        "version": "1.1.0"
     }
 
 
+@app.get("/api/dataset-status")
+def dataset_status():
+    """
+    Returns diagnostics on M5 dataset presence, file checklist, and active source.
+    """
+    return get_m5_status()
+
+
 @app.get("/api/master-data")
-def get_master_data():
+def get_master_data(
+    data_source: str = Query("synthetic", description="'synthetic' or 'm5'"),
+    horizon: int = Query(7, description="Planning horizon days (7, 14, 30)")
+):
     """
     Returns the complete FMCG master dataset including products, warehouses,
     destinations, inventory batches with expiry dates, routes, and demand records.
     """
+    products, warehouses, destinations, batches, routes, demand = get_dataset_bundle(data_source, horizon)
     return {
-        "products": get_demo_products(),
-        "warehouses": get_demo_warehouses(),
-        "destinations": get_demo_destinations(),
-        "batches": get_demo_inventory_batches(),
-        "routes": get_demo_routes(),
-        "demand": get_demo_demand_records()
+        "products": products,
+        "warehouses": warehouses,
+        "destinations": destinations,
+        "batches": batches,
+        "routes": routes,
+        "demand": demand,
+        "data_source": data_source,
+        "horizon_days": horizon
     }
 
 
@@ -84,6 +145,7 @@ class ForecastRequest(BaseModel):
     product_id: str
     destination_id: str
     horizon_days: int = 7
+    data_source: str = "synthetic"
 
 
 @app.post("/api/forecast")
@@ -94,12 +156,14 @@ def get_forecast(req: ForecastRequest):
     return evaluate_forecasting_models(
         product_id=req.product_id,
         destination_id=req.destination_id,
-        horizon_days=req.horizon_days
+        horizon_days=req.horizon_days,
+        data_source=req.data_source
     )
 
 
 class OptimizationRequest(BaseModel):
     planning_horizon_days: int = 7
+    data_source: str = "synthetic"
     custom_products: Optional[List[Product]] = None
     custom_warehouses: Optional[List[Warehouse]] = None
     custom_destinations: Optional[List[Destination]] = None
@@ -113,12 +177,17 @@ def run_baseline(req: OptimizationRequest):
     """
     Executes the greedy demand-priority baseline distribution strategy and validates invariants.
     """
-    products = req.custom_products or get_demo_products()
-    warehouses = req.custom_warehouses or get_demo_warehouses()
-    destinations = req.custom_destinations or get_demo_destinations()
-    batches = req.custom_batches or get_demo_inventory_batches()
-    routes = req.custom_routes or get_demo_routes()
-    demand = req.custom_demand or get_demo_demand_records()
+    if req.custom_products and req.custom_warehouses and req.custom_destinations and req.custom_batches and req.custom_routes and req.custom_demand:
+        products = req.custom_products
+        warehouses = req.custom_warehouses
+        destinations = req.custom_destinations
+        batches = req.custom_batches
+        routes = req.custom_routes
+        demand = req.custom_demand
+    else:
+        products, warehouses, destinations, batches, routes, demand = get_dataset_bundle(
+            req.data_source, req.planning_horizon_days
+        )
 
     plan = run_baseline_allocation(
         products=products,
@@ -151,12 +220,17 @@ def run_optimizer(req: OptimizationRequest):
     Executes constrained OR-Tools Mixed-Integer Programming distribution optimization
     with batch-level FEFO expiry handling, and validates all invariants.
     """
-    products = req.custom_products or get_demo_products()
-    warehouses = req.custom_warehouses or get_demo_warehouses()
-    destinations = req.custom_destinations or get_demo_destinations()
-    batches = req.custom_batches or get_demo_inventory_batches()
-    routes = req.custom_routes or get_demo_routes()
-    demand = req.custom_demand or get_demo_demand_records()
+    if req.custom_products and req.custom_warehouses and req.custom_destinations and req.custom_batches and req.custom_routes and req.custom_demand:
+        products = req.custom_products
+        warehouses = req.custom_warehouses
+        destinations = req.custom_destinations
+        batches = req.custom_batches
+        routes = req.custom_routes
+        demand = req.custom_demand
+    else:
+        products, warehouses, destinations, batches, routes, demand = get_dataset_bundle(
+            req.data_source, req.planning_horizon_days
+        )
 
     try:
         plan = run_ortools_optimization(
@@ -192,12 +266,17 @@ def run_comparison(req: OptimizationRequest):
     Executes both baseline and OR-Tools optimizer under identical starting inputs
     and returns an objective, mathematically validated comparison audit.
     """
-    products = req.custom_products or get_demo_products()
-    warehouses = req.custom_warehouses or get_demo_warehouses()
-    destinations = req.custom_destinations or get_demo_destinations()
-    batches = req.custom_batches or get_demo_inventory_batches()
-    routes = req.custom_routes or get_demo_routes()
-    demand = req.custom_demand or get_demo_demand_records()
+    if req.custom_products and req.custom_warehouses and req.custom_destinations and req.custom_batches and req.custom_routes and req.custom_demand:
+        products = req.custom_products
+        warehouses = req.custom_warehouses
+        destinations = req.custom_destinations
+        batches = req.custom_batches
+        routes = req.custom_routes
+        demand = req.custom_demand
+    else:
+        products, warehouses, destinations, batches, routes, demand = get_dataset_bundle(
+            req.data_source, req.planning_horizon_days
+        )
 
     baseline_plan = run_baseline_allocation(
         products=products,

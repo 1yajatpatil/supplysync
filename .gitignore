@@ -37,3 +37,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 *.log
+
+# Large Datasets (M5 Kaggle)
+data/m5/*.csv
+data/m5/*.zip
+data/m5/*.parquet
+!data/m5/sample/*.csv
+

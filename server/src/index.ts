@@ -66,10 +66,22 @@ app.get('/api/health', async (req: Request, res: Response) => {
   });
 });
 
+// Dataset Diagnostics API
+app.get('/api/dataset-status', async (req: Request, res: Response) => {
+  try {
+    const data = await fetchEngine('/api/dataset-status');
+    res.json(data);
+  } catch (err: any) {
+    res.status(502).json({ error: 'Failed to retrieve dataset status', details: err.message });
+  }
+});
+
 // FMCG Master Data APIs
 app.get('/api/master-data', async (req: Request, res: Response) => {
   try {
-    const data = await fetchEngine('/api/master-data');
+    const dataSource = req.query.data_source || 'synthetic';
+    const horizon = req.query.horizon || 7;
+    const data = await fetchEngine(`/api/master-data?data_source=${dataSource}&horizon=${horizon}`);
     res.json(data);
   } catch (err: any) {
     res.status(502).json({ error: 'Failed to retrieve master data from optimization engine', details: err.message });
@@ -78,7 +90,9 @@ app.get('/api/master-data', async (req: Request, res: Response) => {
 
 app.get('/api/products', async (req: Request, res: Response) => {
   try {
-    const data = await fetchEngine('/api/master-data');
+    const dataSource = req.query.data_source || 'synthetic';
+    const horizon = req.query.horizon || 7;
+    const data = await fetchEngine(`/api/master-data?data_source=${dataSource}&horizon=${horizon}`);
     res.json(data.products || []);
   } catch (err: any) {
     res.status(502).json({ error: err.message });
@@ -87,7 +101,9 @@ app.get('/api/products', async (req: Request, res: Response) => {
 
 app.get('/api/warehouses', async (req: Request, res: Response) => {
   try {
-    const data = await fetchEngine('/api/master-data');
+    const dataSource = req.query.data_source || 'synthetic';
+    const horizon = req.query.horizon || 7;
+    const data = await fetchEngine(`/api/master-data?data_source=${dataSource}&horizon=${horizon}`);
     res.json(data.warehouses || []);
   } catch (err: any) {
     res.status(502).json({ error: err.message });
@@ -96,7 +112,9 @@ app.get('/api/warehouses', async (req: Request, res: Response) => {
 
 app.get('/api/destinations', async (req: Request, res: Response) => {
   try {
-    const data = await fetchEngine('/api/master-data');
+    const dataSource = req.query.data_source || 'synthetic';
+    const horizon = req.query.horizon || 7;
+    const data = await fetchEngine(`/api/master-data?data_source=${dataSource}&horizon=${horizon}`);
     res.json(data.destinations || []);
   } catch (err: any) {
     res.status(502).json({ error: err.message });
@@ -105,7 +123,9 @@ app.get('/api/destinations', async (req: Request, res: Response) => {
 
 app.get('/api/inventory', async (req: Request, res: Response) => {
   try {
-    const data = await fetchEngine('/api/master-data');
+    const dataSource = req.query.data_source || 'synthetic';
+    const horizon = req.query.horizon || 7;
+    const data = await fetchEngine(`/api/master-data?data_source=${dataSource}&horizon=${horizon}`);
     res.json(data.batches || []);
   } catch (err: any) {
     res.status(502).json({ error: err.message });
@@ -114,7 +134,9 @@ app.get('/api/inventory', async (req: Request, res: Response) => {
 
 app.get('/api/demand', async (req: Request, res: Response) => {
   try {
-    const data = await fetchEngine('/api/master-data');
+    const dataSource = req.query.data_source || 'synthetic';
+    const horizon = req.query.horizon || 7;
+    const data = await fetchEngine(`/api/master-data?data_source=${dataSource}&horizon=${horizon}`);
     res.json(data.demand || []);
   } catch (err: any) {
     res.status(502).json({ error: err.message });
@@ -123,7 +145,9 @@ app.get('/api/demand', async (req: Request, res: Response) => {
 
 app.get('/api/routes', async (req: Request, res: Response) => {
   try {
-    const data = await fetchEngine('/api/master-data');
+    const dataSource = req.query.data_source || 'synthetic';
+    const horizon = req.query.horizon || 7;
+    const data = await fetchEngine(`/api/master-data?data_source=${dataSource}&horizon=${horizon}`);
     res.json(data.routes || []);
   } catch (err: any) {
     res.status(502).json({ error: err.message });

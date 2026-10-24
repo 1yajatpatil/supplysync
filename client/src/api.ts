@@ -138,15 +138,30 @@ export interface ComparisonAudit {
   summary_verdict: string;
 }
 
+export interface DatasetStatus {
+  available: boolean;
+  active_source: 'full' | 'sample' | 'none' | 'error';
+  directory?: string;
+  files_present?: string[];
+  store_sample?: string[];
+  item_sample?: string[];
+  message: string;
+  instructions?: string;
+}
+
 export interface ForecastResult {
   product_id: string;
   destination_id: string;
+  data_source?: string;
   horizon_days: number;
   forecasted_demand_total: number;
+  historical_avg_daily?: number;
   selected_model: string;
+  historical_series_sample?: { date: string; actual: number }[];
+  projected_daily?: number[];
   evaluation_metrics: {
-    baseline_sma: { mae: number; rmse: number; mape_pct: number };
-    ml_regression: { mae: number; rmse: number; mape_pct: number };
+    baseline_sma: { mae: number; rmse: number; wape_pct: number };
+    ml_regression: { mae: number; rmse: number; wape_pct: number };
   };
   chronological_validation_note: string;
 }
@@ -156,16 +171,32 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 // Direct fallback mock data for standalone client runs
 import { FALLBACK_MASTER_DATA, computeLocalBaseline, computeLocalOptimized, computeLocalComparison } from './mockData';
 
-export async function fetchMasterData(): Promise<{
+export async function fetchDatasetStatus(): Promise<DatasetStatus> {
+  try {
+    const res = await fetch(`${API_BASE}/dataset-status`);
+    if (res.ok) return await res.json();
+  } catch (e) {
+    console.warn('Dataset status endpoint unreachable.');
+  }
+  return {
+    available: true,
+    active_source: 'sample',
+    message: 'Local sample M5 forecasting scenario active.'
+  };
+}
+
+export async function fetchMasterData(dataSource = 'synthetic', horizonDays = 7): Promise<{
   products: Product[];
   warehouses: Warehouse[];
   destinations: Destination[];
   batches: InventoryBatch[];
   routes: Route[];
   demand: DemandRecord[];
+  data_source?: string;
+  horizon_days?: number;
 }> {
   try {
-    const res = await fetch(`${API_BASE}/master-data`);
+    const res = await fetch(`${API_BASE}/master-data?data_source=${dataSource}&horizon=${horizonDays}`);
     if (res.ok) {
       return await res.json();
     }
@@ -175,12 +206,12 @@ export async function fetchMasterData(): Promise<{
   return FALLBACK_MASTER_DATA;
 }
 
-export async function runBaselinePlan(horizonDays = 7): Promise<OptimizationPlan> {
+export async function runBaselinePlan(horizonDays = 7, dataSource = 'synthetic'): Promise<OptimizationPlan> {
   try {
     const res = await fetch(`${API_BASE}/optimization/baseline`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planning_horizon_days: horizonDays })
+      body: JSON.stringify({ planning_horizon_days: horizonDays, data_source: dataSource })
     });
     if (res.ok) return await res.json();
   } catch (e) {
@@ -189,12 +220,12 @@ export async function runBaselinePlan(horizonDays = 7): Promise<OptimizationPlan
   return computeLocalBaseline(horizonDays);
 }
 
-export async function runOptimizedPlan(horizonDays = 7): Promise<OptimizationPlan> {
+export async function runOptimizedPlan(horizonDays = 7, dataSource = 'synthetic'): Promise<OptimizationPlan> {
   try {
     const res = await fetch(`${API_BASE}/optimization/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planning_horizon_days: horizonDays })
+      body: JSON.stringify({ planning_horizon_days: horizonDays, data_source: dataSource })
     });
     if (res.ok) return await res.json();
   } catch (e) {
@@ -203,12 +234,12 @@ export async function runOptimizedPlan(horizonDays = 7): Promise<OptimizationPla
   return computeLocalOptimized(horizonDays);
 }
 
-export async function runComparisonAudit(horizonDays = 7): Promise<ComparisonAudit> {
+export async function runComparisonAudit(horizonDays = 7, dataSource = 'synthetic'): Promise<ComparisonAudit> {
   try {
     const res = await fetch(`${API_BASE}/optimization/compare`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planning_horizon_days: horizonDays })
+      body: JSON.stringify({ planning_horizon_days: horizonDays, data_source: dataSource })
     });
     if (res.ok) return await res.json();
   } catch (e) {
@@ -217,12 +248,22 @@ export async function runComparisonAudit(horizonDays = 7): Promise<ComparisonAud
   return computeLocalComparison(horizonDays);
 }
 
-export async function fetchForecast(productId: string, destinationId: string, horizonDays = 7): Promise<ForecastResult> {
+export async function fetchForecast(
+  productId: string, 
+  destinationId: string, 
+  horizonDays = 7,
+  dataSource = 'synthetic'
+): Promise<ForecastResult> {
   try {
     const res = await fetch(`${API_BASE}/forecast/predict`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ product_id: productId, destination_id: destinationId, horizon_days: horizonDays })
+      body: JSON.stringify({ 
+        product_id: productId, 
+        destination_id: destinationId, 
+        horizon_days: horizonDays,
+        data_source: dataSource
+      })
     });
     if (res.ok) return await res.json();
   } catch (e) {
@@ -231,12 +272,16 @@ export async function fetchForecast(productId: string, destinationId: string, ho
   return {
     product_id: productId,
     destination_id: destinationId,
+    data_source: dataSource,
     horizon_days: horizonDays,
-    forecasted_demand_total: 1250,
-    selected_model: "ML Time-Series Regression",
+    forecasted_demand_total: horizonDays * 170,
+    historical_avg_daily: 170.0,
+    selected_model: "Seasonal Time-Series Regression",
+    historical_series_sample: [],
+    projected_daily: Array(horizonDays).fill(170),
     evaluation_metrics: {
-      baseline_sma: { mae: 14.2, rmse: 18.5, mape_pct: 11.4 },
-      ml_regression: { mae: 9.8, rmse: 12.1, mape_pct: 7.9 }
+      baseline_sma: { mae: 14.2, rmse: 18.5, wape_pct: 10.4 },
+      ml_regression: { mae: 9.8, rmse: 12.1, wape_pct: 7.2 }
     },
     chronological_validation_note: "Evaluated strictly on holdout historical periods without future lookahead."
   };

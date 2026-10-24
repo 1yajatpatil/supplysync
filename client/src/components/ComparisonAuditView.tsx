@@ -10,18 +10,29 @@ import {
   Sparkles,
   ArrowRight,
   ShieldCheck,
-  RotateCcw
+  RotateCcw,
+  Database,
+  BarChart2
 } from 'lucide-react';
 import { ComparisonAudit, runComparisonAudit } from '../api';
 
-export const ComparisonAuditView: React.FC = () => {
+interface ComparisonAuditViewProps {
+  dataSource?: 'synthetic' | 'm5';
+  onDataSourceChange?: (source: 'synthetic' | 'm5') => void;
+}
+
+export const ComparisonAuditView: React.FC<ComparisonAuditViewProps> = ({
+  dataSource = 'synthetic',
+  onDataSourceChange
+}) => {
+  const [horizonDays, setHorizonDays] = useState<number>(7);
   const [audit, setAudit] = useState<ComparisonAudit | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
-  const fetchAuditData = async () => {
+  const fetchAuditData = async (h = horizonDays, ds = dataSource) => {
     setLoading(true);
     try {
-      const res = await runComparisonAudit(7);
+      const res = await runComparisonAudit(h, ds);
       setAudit(res);
     } catch (e) {
       console.error(e);
@@ -31,227 +42,212 @@ export const ComparisonAuditView: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchAuditData();
-  }, []);
+    fetchAuditData(horizonDays, dataSource);
+  }, [horizonDays, dataSource]);
 
-  if (loading && !audit) {
-    return (
-      <div className="p-12 text-center bg-white rounded-2xl border border-[#E5E6E0] shadow-xs">
-        <div className="w-8 h-8 border-3 border-[#526B50] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-sm font-semibold text-[#191B19]">Computing Baseline vs. OR-Tools Optimization Audit...</p>
-        <p className="text-xs text-[#70736E] mt-1">Executing identical starting demand snapshots across both engines.</p>
-      </div>
-    );
-  }
-
-  if (!audit) return null;
-
-  const b = audit.baseline_metrics;
-  const o = audit.optimized_metrics;
+  const b = audit?.baseline_metrics;
+  const o = audit?.optimized_metrics;
 
   return (
-    <div className="space-y-6">
-      {/* Top Verdict Banner */}
-      <div className="p-6 rounded-2xl bg-white border border-[#E5E6E0] shadow-xs">
-        <div className="flex items-center justify-between pb-4 border-b border-[#F0F0EB] mb-4">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#526B50]" />
-            <h3 className="text-lg font-bold text-[#191B19]">Empirical Performance Audit</h3>
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#EBF1EA] text-[#526B50] font-semibold">
-              Triwizathon PS2 Benchmark
+    <div className="space-y-5">
+      {/* Configuration bar */}
+      <div className="p-4 sm:p-5 rounded-xl bg-white border border-[#E5E6E0] shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#70736E]">Performance Audit</span>
+            <span className="w-1 h-1 rounded-full bg-[#E5E6E0]" />
+            <span className="text-[10px] font-semibold text-[#526B50] bg-[#EBF1EA] px-2 py-0.5 rounded-full">
+              Identical Starting Snapshots
             </span>
+          </div>
+          <h3 className="text-lg font-bold text-[#191B19]">Empirical Performance Audit</h3>
+          <p className="text-xs text-[#70736E] mt-0.5">
+            Side-by-side comparison of Greedy Demand-Priority Baseline vs. Google OR-Tools Constrained MILP Optimizer.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Data Source Selector */}
+          {onDataSourceChange && (
+            <div className="flex items-center gap-1 bg-[#F7F7F4] border border-[#E5E6E0] p-1 rounded-lg text-xs font-medium">
+              <button
+                onClick={() => onDataSourceChange('synthetic')}
+                disabled={loading}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  dataSource === 'synthetic'
+                    ? 'bg-white text-[#191B19] shadow-xs font-semibold'
+                    : 'text-[#70736E] hover:text-[#191B19]'
+                }`}
+              >
+                Synthetic FMCG
+              </button>
+              <button
+                onClick={() => onDataSourceChange('m5')}
+                disabled={loading}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  dataSource === 'm5'
+                    ? 'bg-white text-[#526B50] shadow-xs font-semibold'
+                    : 'text-[#70736E] hover:text-[#191B19]'
+                }`}
+              >
+                Real M5 Kaggle
+              </button>
+            </div>
+          )}
+
+          {/* Horizon Selector */}
+          <div className="flex items-center gap-1 bg-[#F7F7F4] border border-[#E5E6E0] p-1 rounded-lg text-xs font-medium">
+            {[7, 14, 30].map(h => (
+              <button
+                key={h}
+                onClick={() => setHorizonDays(h)}
+                disabled={loading}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  horizonDays === h
+                    ? 'bg-white text-[#191B19] shadow-xs font-semibold'
+                    : 'text-[#70736E] hover:text-[#191B19]'
+                }`}
+              >
+                {h}D
+              </button>
+            ))}
           </div>
 
           <button
-            onClick={fetchAuditData}
+            onClick={() => fetchAuditData(horizonDays, dataSource)}
             disabled={loading}
-            className="flex items-center gap-1.5 text-xs font-semibold text-[#70736E] hover:text-[#191B19] px-3 py-1.5 rounded-xl border border-[#E5E6E0] bg-[#F7F7F4] cursor-pointer"
+            className="h-9 px-3.5 rounded-lg border border-[#E5E6E0] bg-white hover:bg-[#F7F7F4] text-xs font-semibold text-[#191B19] flex items-center gap-1.5 transition-colors cursor-pointer"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Re-Audit Models</span>
+            <RotateCcw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <span>Re-Audit</span>
           </button>
         </div>
-
-        <p className="text-sm font-medium text-[#191B19] leading-relaxed bg-[#F7F7F4] p-4 rounded-xl border border-[#E5E6E0]">
-          {audit.summary_verdict}
-        </p>
       </div>
 
-      {/* Comparison Metrics Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Metric 1: Transportation Cost */}
-        <div className="p-5 rounded-2xl bg-white border border-[#E5E6E0] shadow-xs">
-          <div className="flex items-center justify-between text-xs font-semibold text-[#70736E] uppercase mb-1">
-            <span>Freight Cost</span>
-            <DollarSign className="w-4 h-4 text-[#526B50]" />
-          </div>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-2xl font-bold text-[#191B19]">
-              ${o.total_transport_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            <span className={`text-xs font-bold ${audit.cost_reduction_pct >= 0 ? 'text-[#526B50]' : 'text-amber-700'}`}>
-              {audit.cost_reduction_pct >= 0 ? `↓ ${audit.cost_reduction_pct}%` : `↑ ${Math.abs(audit.cost_reduction_pct)}%`}
-            </span>
-          </div>
-          <div className="mt-3 text-xs text-[#70736E] space-y-1 pt-3 border-t border-[#F0F0EB]">
-            <div className="flex justify-between">
-              <span>Baseline Heuristic:</span>
-              <span className="font-semibold text-[#191B19]">${b.total_transport_cost.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between font-medium text-[#526B50]">
-              <span>Cost Savings:</span>
-              <span>${audit.cost_savings_amount.toLocaleString()}</span>
-            </div>
-          </div>
+      {loading && !audit ? (
+        <div className="p-12 text-center bg-white rounded-xl border border-[#E5E6E0] shadow-xs">
+          <div className="w-8 h-8 border-2 border-[#526B50] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-sm font-semibold text-[#191B19]">Computing Baseline vs. OR-Tools Audit...</p>
+          <p className="text-xs text-[#70736E] mt-1">Executing identical starting demand snapshots across both engines.</p>
         </div>
+      ) : audit && b && o ? (
+        <>
+          {/* Top Verdict Banner */}
+          <div className="p-4 sm:p-5 rounded-xl bg-white border border-[#E5E6E0] shadow-xs">
+            <div className="flex items-center gap-2 mb-2">
+              <ShieldCheck className="w-4 h-4 text-[#526B50]" />
+              <h4 className="text-xs font-bold uppercase tracking-wider text-[#191B19]">
+                Empirical Evaluation Verdict
+              </h4>
+            </div>
+            <p className="text-sm text-[#191B19] leading-relaxed bg-[#F7F7F4] p-3 rounded-lg border border-[#E5E6E0]">
+              {audit.summary_verdict}
+            </p>
+          </div>
 
-        {/* Metric 2: Demand Fulfillment */}
-        <div className="p-5 rounded-2xl bg-white border border-[#E5E6E0] shadow-xs">
-          <div className="flex items-center justify-between text-xs font-semibold text-[#70736E] uppercase mb-1">
-            <span>Fulfillment Rate</span>
-            <CheckCircle2 className="w-4 h-4 text-[#526B50]" />
-          </div>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-2xl font-bold text-[#191B19]">
-              {o.fulfillment_rate_pct}%
-            </span>
-            <span className="text-xs font-bold text-[#526B50]">
-              +{audit.fulfillment_improvement_pct}%
-            </span>
-          </div>
-          <div className="mt-3 text-xs text-[#70736E] space-y-1 pt-3 border-t border-[#F0F0EB]">
-            <div className="flex justify-between">
-              <span>Baseline Heuristic:</span>
-              <span className="font-semibold text-[#191B19]">{b.fulfillment_rate_pct}%</span>
-            </div>
-            <div className="flex justify-between font-medium text-[#526B50]">
-              <span>Units Delivered:</span>
-              <span>{o.total_fulfilled_units.toLocaleString()} / {o.total_demand_units.toLocaleString()}</span>
-            </div>
-          </div>
-        </div>
+          {/* Side-by-side KPI Comparison Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Baseline Strategy Card */}
+            <div className="p-4 sm:p-5 rounded-xl bg-white border border-[#E5E6E0] shadow-2xs">
+              <div className="flex items-center justify-between pb-3 border-b border-[#F0F0EB] mb-4">
+                <div>
+                  <span className="text-[10px] font-bold text-[#70736E] uppercase tracking-wider block">
+                    Benchmark Heuristic
+                  </span>
+                  <h4 className="text-base font-bold text-[#191B19]">Greedy Demand-Priority Baseline</h4>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#F2F2EE] text-[#70736E] font-medium border border-[#E5E6E0]">
+                  Heuristic Rule
+                </span>
+              </div>
 
-        {/* Metric 3: Stockout Reduction */}
-        <div className="p-5 rounded-2xl bg-white border border-[#E5E6E0] shadow-xs">
-          <div className="flex items-center justify-between text-xs font-semibold text-[#70736E] uppercase mb-1">
-            <span>Unmet Demand / Stockouts</span>
-            <AlertTriangle className="w-4 h-4 text-amber-600" />
-          </div>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-2xl font-bold text-[#191B19]">
-              {o.total_unmet_units.toLocaleString()} units
-            </span>
-            <span className="text-xs font-bold text-[#526B50]">
-              ↓ {audit.stockout_reduction_pct}%
-            </span>
-          </div>
-          <div className="mt-3 text-xs text-[#70736E] space-y-1 pt-3 border-t border-[#F0F0EB]">
-            <div className="flex justify-between">
-              <span>Baseline Shortages:</span>
-              <span className="font-semibold text-rose-600">{b.total_unmet_units.toLocaleString()} units</span>
-            </div>
-            <div className="flex justify-between font-medium text-[#526B50]">
-              <span>Shortage Volume Avoided:</span>
-              <span>-{(b.total_unmet_units - o.total_unmet_units).toLocaleString()} units</span>
-            </div>
-          </div>
-        </div>
+              <p className="text-xs text-[#70736E] mb-4">
+                Satisfies retail demand tier-by-tier by greedily selecting the lowest direct unit freight tariff, without global network coordination or FEFO batch reordering.
+              </p>
 
-        {/* Metric 4: Avoided Expiry Spoilage (FEFO) */}
-        <div className="p-5 rounded-2xl bg-white border border-[#E5E6E0] shadow-xs">
-          <div className="flex items-center justify-between text-xs font-semibold text-[#70736E] uppercase mb-1">
-            <span>Avoided Expiry Spoilage</span>
-            <Clock className="w-4 h-4 text-[#526B50]" />
-          </div>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-2xl font-bold text-[#526B50]">
-              {o.expiring_stock_utilized_units.toLocaleString()} units
-            </span>
-            <span className="text-xs font-bold text-[#526B50]">
-              FEFO Active
-            </span>
-          </div>
-          <div className="mt-3 text-xs text-[#70736E] space-y-1 pt-3 border-t border-[#F0F0EB]">
-            <div className="flex justify-between">
-              <span>Baseline Spoilage Risk:</span>
-              <span className="font-semibold text-amber-700">{b.potential_waste_unallocated_units.toLocaleString()} units</span>
+              <div className="space-y-2.5 text-xs">
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#F7F7F4] border border-[#E5E6E0]">
+                  <span className="text-[#70736E]">Fulfillment Rate:</span>
+                  <span className="font-bold text-[#191B19]">{b.fulfillment_rate_pct}% ({b.total_fulfilled_units.toLocaleString()} / {b.total_demand_units.toLocaleString()} units)</span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#F7F7F4] border border-[#E5E6E0]">
+                  <span className="text-[#70736E]">Total Freight Cost:</span>
+                  <span className="font-bold text-[#191B19]">${b.total_transport_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#F7F7F4] border border-[#E5E6E0]">
+                  <span className="text-[#70736E]">Unmet Demand:</span>
+                  <span className="font-bold text-amber-800">{b.total_unmet_units.toLocaleString()} units ({b.destinations_with_shortages} destination shortages)</span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#F7F7F4] border border-[#E5E6E0]">
+                  <span className="text-[#70736E]">Near-Expiry Stock Utilized:</span>
+                  <span className="font-medium text-[#191B19]">{b.expiring_stock_utilized_units.toLocaleString()} units</span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#F7F7F4] border border-[#E5E6E0]">
+                  <span className="text-[#70736E]">Runtime:</span>
+                  <span className="font-mono text-[#191B19]">{b.solver_runtime_ms} ms</span>
+                </div>
+              </div>
             </div>
-            <div className="flex justify-between font-medium text-[#526B50]">
-              <span>Optimizer Risk Remaining:</span>
-              <span>{o.potential_waste_unallocated_units.toLocaleString()} units</span>
+
+            {/* OR-Tools Optimized Strategy Card */}
+            <div className="p-4 sm:p-5 rounded-xl bg-white border-2 border-[#526B50] shadow-xs">
+              <div className="flex items-center justify-between pb-3 border-b border-[#F0F0EB] mb-4">
+                <div>
+                  <span className="text-[10px] font-bold text-[#526B50] uppercase tracking-wider block">
+                    Mathematical Global Solution
+                  </span>
+                  <h4 className="text-base font-bold text-[#191B19]">OR-Tools Mixed-Integer Programming</h4>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#EBF1EA] text-[#526B50] font-semibold border border-[#D3DFD2]">
+                  SCIP Optimal
+                </span>
+              </div>
+
+              <p className="text-xs text-[#70736E] mb-4">
+                Simultaneously solves discrete allocation across all warehouses, destination SLAs, corridor capacity limits, and batch-level FEFO shelf life constraints.
+              </p>
+
+              <div className="space-y-2.5 text-xs">
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#EBF1EA]/60 border border-[#D3DFD2]">
+                  <span className="text-[#41553F]">Fulfillment Rate:</span>
+                  <span className="font-bold text-[#526B50]">
+                    {o.fulfillment_rate_pct}% 
+                    <span className="ml-1 text-[11px] font-semibold">
+                      ({audit.fulfillment_improvement_pct >= 0 ? `+${audit.fulfillment_improvement_pct}%` : `${audit.fulfillment_improvement_pct}%`})
+                    </span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#EBF1EA]/60 border border-[#D3DFD2]">
+                  <span className="text-[#41553F]">Total Freight Cost:</span>
+                  <span className="font-bold text-[#191B19]">
+                    ${o.total_transport_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <span className="ml-1 text-[11px] font-semibold text-[#526B50]">
+                      ({audit.cost_reduction_pct >= 0 ? `-${audit.cost_reduction_pct}% cost` : `+${Math.abs(audit.cost_reduction_pct)}%`})
+                    </span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#EBF1EA]/60 border border-[#D3DFD2]">
+                  <span className="text-[#41553F]">Unmet Demand:</span>
+                  <span className="font-bold text-[#191B19]">
+                    {o.total_unmet_units.toLocaleString()} units
+                    {audit.stockout_reduction_pct > 0 && (
+                      <span className="ml-1 text-[11px] text-[#526B50]">(-{audit.stockout_reduction_pct}% stockouts)</span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#EBF1EA]/60 border border-[#D3DFD2]">
+                  <span className="text-[#41553F]">Near-Expiry Stock Utilized:</span>
+                  <span className="font-bold text-[#526B50]">{o.expiring_stock_utilized_units.toLocaleString()} units (FEFO Priority)</span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#EBF1EA]/60 border border-[#D3DFD2]">
+                  <span className="text-[#41553F]">Runtime:</span>
+                  <span className="font-mono text-[#191B19]">{o.solver_runtime_ms} ms</span>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Side-by-Side Detailed Breakdown Table */}
-      <div className="p-6 rounded-2xl bg-white border border-[#E5E6E0] shadow-xs">
-        <h4 className="text-lg font-bold text-[#191B19] mb-1">Side-by-Side Strategy Audit Table</h4>
-        <p className="text-xs text-[#70736E] mb-4">
-          Both algorithms evaluated against identical starting inventories, customer demand schedules, and route capacity constraints.
-        </p>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-[#E5E6E0] text-[#70736E] uppercase font-bold tracking-wider">
-                <th className="pb-3 px-4">Evaluation Dimension</th>
-                <th className="pb-3 px-4">Baseline Strategy (Greedy Local Tariff)</th>
-                <th className="pb-3 px-4">SupplySync (Google OR-Tools MILP)</th>
-                <th className="pb-3 px-4 text-right">Optimization Delta</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#F0F0EB]">
-              <tr className="hover:bg-[#F7F7F4]">
-                <td className="py-3.5 px-4 font-semibold text-[#191B19]">Total Landed Freight Cost</td>
-                <td className="py-3.5 px-4 text-[#70736E] font-mono">${b.total_transport_cost.toLocaleString()}</td>
-                <td className="py-3.5 px-4 font-bold text-[#191B19] font-mono">${o.total_transport_cost.toLocaleString()}</td>
-                <td className="py-3.5 px-4 text-right font-bold text-[#526B50]">
-                  -${audit.cost_savings_amount.toLocaleString()} ({audit.cost_reduction_pct}%)
-                </td>
-              </tr>
-              <tr className="hover:bg-[#F7F7F4]">
-                <td className="py-3.5 px-4 font-semibold text-[#191B19]">Customer Demand Fulfillment</td>
-                <td className="py-3.5 px-4 text-[#70736E]">{b.fulfillment_rate_pct}% ({b.total_fulfilled_units.toLocaleString()} units)</td>
-                <td className="py-3.5 px-4 font-bold text-[#191B19]">{o.fulfillment_rate_pct}% ({o.total_fulfilled_units.toLocaleString()} units)</td>
-                <td className="py-3.5 px-4 text-right font-bold text-[#526B50]">
-                  +{audit.fulfillment_improvement_pct}%
-                </td>
-              </tr>
-              <tr className="hover:bg-[#F7F7F4]">
-                <td className="py-3.5 px-4 font-semibold text-[#191B19]">Stockout Volume (Unmet Demand)</td>
-                <td className="py-3.5 px-4 text-rose-600 font-semibold">{b.total_unmet_units.toLocaleString()} units</td>
-                <td className="py-3.5 px-4 font-bold text-[#191B19]">{o.total_unmet_units.toLocaleString()} units</td>
-                <td className="py-3.5 px-4 text-right font-bold text-[#526B50]">
-                  -{audit.stockout_reduction_pct}%
-                </td>
-              </tr>
-              <tr className="hover:bg-[#F7F7F4]">
-                <td className="py-3.5 px-4 font-semibold text-[#191B19]">Destinations Suffering Shortages</td>
-                <td className="py-3.5 px-4 text-[#70736E]">{b.destinations_with_shortages} destinations</td>
-                <td className="py-3.5 px-4 font-bold text-[#191B19]">{o.destinations_with_shortages} destinations</td>
-                <td className="py-3.5 px-4 text-right font-bold text-[#526B50]">
-                  -{b.destinations_with_shortages - o.destinations_with_shortages} locations
-                </td>
-              </tr>
-              <tr className="hover:bg-[#F7F7F4]">
-                <td className="py-3.5 px-4 font-semibold text-[#191B19]">Near-Expiry Stock Rescued (FEFO)</td>
-                <td className="py-3.5 px-4 text-[#70736E]">{b.expiring_stock_utilized_units.toLocaleString()} units</td>
-                <td className="py-3.5 px-4 font-bold text-[#526B50]">{o.expiring_stock_utilized_units.toLocaleString()} units</td>
-                <td className="py-3.5 px-4 text-right font-bold text-[#526B50]">
-                  +{audit.waste_reduction_units.toLocaleString()} units protected
-                </td>
-              </tr>
-              <tr className="hover:bg-[#F7F7F4]">
-                <td className="py-3.5 px-4 font-semibold text-[#191B19]">Computation Solver Runtime</td>
-                <td className="py-3.5 px-4 font-mono text-[#70736E]">{b.solver_runtime_ms} ms (Heuristic)</td>
-                <td className="py-3.5 px-4 font-mono text-[#191B19]">{o.solver_runtime_ms} ms (OR-Tools SCIP)</td>
-                <td className="py-3.5 px-4 text-right font-mono text-[#526B50]">Optimal In Real-Time</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+        </>
+      ) : null}
     </div>
   );
 };

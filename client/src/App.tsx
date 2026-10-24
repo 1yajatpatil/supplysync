@@ -8,29 +8,26 @@ import { ComparisonAuditView } from './components/ComparisonAuditView';
 import { 
   Box, 
   ArrowLeft, 
-  Play, 
-  Warehouse, 
-  Store, 
-  Truck, 
-  BarChart3, 
-  Scale, 
-  Layers,
-  Sparkles,
-  RotateCcw
+  Database,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 import { 
   fetchMasterData, 
+  fetchDatasetStatus,
   Product, 
   Warehouse as WarehouseType, 
   Destination, 
   InventoryBatch, 
   Route, 
-  DemandRecord 
+  DemandRecord,
+  DatasetStatus
 } from './api';
 
 export function App() {
   const [currentView, setCurrentView] = useState<'landing' | 'app'>('landing');
   const [activeTab, setActiveTab] = useState<'overview' | 'inventory' | 'demand' | 'optimization' | 'comparison'>('overview');
+  const [dataSource, setDataSource] = useState<'synthetic' | 'm5'>('synthetic');
 
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseType[]>([]);
@@ -39,18 +36,27 @@ export function App() {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [demand, setDemand] = useState<DemandRecord[]>([]);
   const [loadingData, setLoadingData] = useState<boolean>(true);
+  const [datasetStatus, setDatasetStatus] = useState<DatasetStatus | null>(null);
+
+  useEffect(() => {
+    async function loadStatus() {
+      const status = await fetchDatasetStatus();
+      setDatasetStatus(status);
+    }
+    loadStatus();
+  }, []);
 
   useEffect(() => {
     async function loadData() {
       setLoadingData(true);
       try {
-        const data = await fetchMasterData();
-        setProducts(data.products);
-        setWarehouses(data.warehouses);
-        setDestinations(data.destinations);
-        setBatches(data.batches);
-        setRoutes(data.routes);
-        setDemand(data.demand);
+        const data = await fetchMasterData(dataSource, 7);
+        setProducts(data.products || []);
+        setWarehouses(data.warehouses || []);
+        setDestinations(data.destinations || []);
+        setBatches(data.batches || []);
+        setRoutes(data.routes || []);
+        setDemand(data.demand || []);
       } catch (e) {
         console.error("Failed to load master data", e);
       } finally {
@@ -58,7 +64,7 @@ export function App() {
       }
     }
     loadData();
-  }, []);
+  }, [dataSource]);
 
   if (currentView === 'landing') {
     return (
@@ -148,11 +154,37 @@ export function App() {
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1.5 text-xs text-[#526B50] font-semibold bg-white border border-[#E5E6E0] px-2.5 py-1 rounded-full shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            {/* Global Data Stream Selector */}
+            <div className="flex items-center gap-1 bg-[#EBECE6] p-0.5 rounded-lg text-[11px] font-medium border border-[#E5E6E0]">
+              <button
+                onClick={() => setDataSource('synthetic')}
+                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                  dataSource === 'synthetic' 
+                    ? 'bg-white text-[#191B19] shadow-xs font-semibold' 
+                    : 'text-[#70736E] hover:text-[#191B19]'
+                }`}
+                title="Switch to Synthetic FMCG Indian multi-echelon network"
+              >
+                FMCG Demo
+              </button>
+              <button
+                onClick={() => setDataSource('m5')}
+                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                  dataSource === 'm5' 
+                    ? 'bg-white text-[#526B50] shadow-xs font-semibold' 
+                    : 'text-[#70736E] hover:text-[#191B19]'
+                }`}
+                title="Switch to Real Walmart M5 Forecasting competition dataset"
+              >
+                Real M5
+              </button>
+            </div>
+
+            {/* Solver Status Pill */}
+            <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-[#526B50] font-semibold bg-white border border-[#E5E6E0] px-2.5 py-1 rounded-full shadow-2xs">
               <span className="w-1.5 h-1.5 rounded-full bg-[#526B50] animate-pulse" />
-              <span className="hidden sm:inline">OR-Tools Solver Online</span>
-              <span className="sm:hidden">Online</span>
+              <span>OR-Tools MILP Online</span>
             </span>
           </div>
         </div>
@@ -217,6 +249,8 @@ export function App() {
             products={products}
             destinations={destinations}
             demandRecords={demand}
+            dataSource={dataSource}
+            onDataSourceChange={setDataSource}
           />
         )}
 
@@ -225,12 +259,17 @@ export function App() {
             products={products}
             warehouses={warehouses}
             destinations={destinations}
+            dataSource={dataSource}
+            onDataSourceChange={setDataSource}
             onNavigateToComparison={() => setActiveTab('comparison')}
           />
         )}
 
         {activeTab === 'comparison' && (
-          <ComparisonAuditView />
+          <ComparisonAuditView 
+            dataSource={dataSource}
+            onDataSourceChange={setDataSource}
+          />
         )}
       </main>
     </div>
