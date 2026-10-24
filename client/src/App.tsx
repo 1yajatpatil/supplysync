@@ -1,15 +1,64 @@
-import { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LandingPage } from './components/LandingPage';
+import { NetworkOverview } from './components/NetworkOverview';
+import { InventoryManager } from './components/InventoryManager';
+import { DemandForecaster } from './components/DemandForecaster';
+import { OptimizationConsole } from './components/OptimizationConsole';
+import { ComparisonAuditView } from './components/ComparisonAuditView';
 import { 
   Box, 
   ArrowLeft, 
-  CheckCircle2,
-  Play
+  Play, 
+  Warehouse, 
+  Store, 
+  Truck, 
+  BarChart3, 
+  Scale, 
+  Layers,
+  Sparkles,
+  RotateCcw
 } from 'lucide-react';
+import { 
+  fetchMasterData, 
+  Product, 
+  Warehouse as WarehouseType, 
+  Destination, 
+  InventoryBatch, 
+  Route, 
+  DemandRecord 
+} from './api';
 
 export function App() {
   const [currentView, setCurrentView] = useState<'landing' | 'app'>('landing');
   const [activeTab, setActiveTab] = useState<'overview' | 'inventory' | 'demand' | 'optimization' | 'comparison'>('overview');
+
+  const [products, setProducts] = useState<Product[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseType[]>([]);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [batches, setBatches] = useState<InventoryBatch[]>([]);
+  const [routes, setRoutes] = useState<Route[]>([]);
+  const [demand, setDemand] = useState<DemandRecord[]>([]);
+  const [loadingData, setLoadingData] = useState<boolean>(true);
+
+  useEffect(() => {
+    async function loadData() {
+      setLoadingData(true);
+      try {
+        const data = await fetchMasterData();
+        setProducts(data.products);
+        setWarehouses(data.warehouses);
+        setDestinations(data.destinations);
+        setBatches(data.batches);
+        setRoutes(data.routes);
+        setDemand(data.demand);
+      } catch (e) {
+        console.error("Failed to load master data", e);
+      } finally {
+        setLoadingData(false);
+      }
+    }
+    loadData();
+  }, []);
 
   if (currentView === 'landing') {
     return (
@@ -34,7 +83,7 @@ export function App() {
           <div className="flex items-center gap-4">
             <button
               onClick={() => setCurrentView('landing')}
-              className="flex items-center gap-1.5 text-xs font-medium text-[#70736E] hover:text-[#191B19] transition-colors px-2.5 py-1.5 rounded-lg border border-[#E5E6E0] bg-white cursor-pointer"
+              className="flex items-center gap-1.5 text-xs font-semibold text-[#70736E] hover:text-[#191B19] transition-colors px-3 py-1.5 rounded-xl border border-[#E5E6E0] bg-white cursor-pointer hover:border-[#D0D2C8]"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Back to Home</span>
@@ -43,18 +92,18 @@ export function App() {
             <div className="h-4 w-px bg-[#E5E6E0]" />
 
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-[#526B50] flex items-center justify-center text-white">
+              <div className="w-8 h-8 rounded-lg bg-[#526B50] flex items-center justify-center text-white shadow-xs">
                 <Box className="w-4 h-4" />
               </div>
               <span className="font-bold tracking-tight text-lg">SupplySync</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-[#EBF1EA] text-[#526B50] font-medium border border-[#D3DFD2]">
-                PS2 Console
+              <span className="hidden sm:inline-block text-[11px] px-2 py-0.5 rounded-full bg-[#EBF1EA] text-[#526B50] font-semibold border border-[#D3DFD2]">
+                Triwizathon 2026 PS2
               </span>
             </div>
           </div>
 
-          {/* Quick tab switcher */}
-          <div className="flex items-center gap-1 bg-[#EBECE6] p-1 rounded-xl text-xs font-medium">
+          {/* Tab Navigation Switcher */}
+          <div className="hidden lg:flex items-center gap-1 bg-[#EBECE6] p-1 rounded-xl text-xs font-medium">
             <button
               onClick={() => setActiveTab('overview')}
               className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
@@ -98,70 +147,88 @@ export function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1.5 text-xs text-[#526B50] font-medium">
+            <span className="inline-flex items-center gap-1.5 text-xs text-[#526B50] font-semibold">
               <span className="w-2 h-2 rounded-full bg-[#526B50] animate-pulse" />
-              OR-Tools Solver Online
+              <span>OR-Tools MIP Online</span>
             </span>
           </div>
         </div>
       </header>
 
+      {/* Mobile Tab Navigation */}
+      <div className="lg:hidden bg-white border-b border-[#E5E6E0] px-4 py-2 flex items-center gap-2 overflow-x-auto text-xs">
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={`px-3 py-1.5 rounded-lg shrink-0 ${activeTab === 'overview' ? 'bg-[#526B50] text-white font-bold' : 'text-[#70736E]'}`}
+        >
+          Network Overview
+        </button>
+        <button
+          onClick={() => setActiveTab('inventory')}
+          className={`px-3 py-1.5 rounded-lg shrink-0 ${activeTab === 'inventory' ? 'bg-[#526B50] text-white font-bold' : 'text-[#70736E]'}`}
+        >
+          Inventory Batches
+        </button>
+        <button
+          onClick={() => setActiveTab('demand')}
+          className={`px-3 py-1.5 rounded-lg shrink-0 ${activeTab === 'demand' ? 'bg-[#526B50] text-white font-bold' : 'text-[#70736E]'}`}
+        >
+          Demand Forecasts
+        </button>
+        <button
+          onClick={() => setActiveTab('optimization')}
+          className={`px-3 py-1.5 rounded-lg shrink-0 ${activeTab === 'optimization' ? 'bg-[#526B50] text-white font-bold' : 'text-[#70736E]'}`}
+        >
+          Distribution Engine
+        </button>
+        <button
+          onClick={() => setActiveTab('comparison')}
+          className={`px-3 py-1.5 rounded-lg shrink-0 ${activeTab === 'comparison' ? 'bg-[#526B50] text-white font-bold' : 'text-[#70736E]'}`}
+        >
+          Baseline Audit
+        </button>
+      </div>
+
       {/* Main Container */}
       <main className="flex-1 max-w-7xl mx-auto px-6 py-8 w-full">
-        {/* Workspace banner */}
-        <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-white border border-[#E5E6E0] shadow-xs">
-          <div>
-            <div className="text-xs font-bold text-[#526B50] uppercase tracking-wider mb-0.5">
-              FMCG Distribution Planning Environment
-            </div>
-            <h1 className="text-xl font-bold text-[#191B19]">
-              Regional Distribution Intelligence Console
-            </h1>
-            <p className="text-xs text-[#70736E] mt-0.5">
-              Synthesized realistic FMCG distribution network with regional demand imbalances, batch expiry schedules, and constrained transport routes.
-            </p>
-          </div>
+        {activeTab === 'overview' && (
+          <NetworkOverview
+            warehouses={warehouses}
+            destinations={destinations}
+            routes={routes}
+            products={products}
+            onNavigateToOptimizer={() => setActiveTab('optimization')}
+          />
+        )}
 
-          <div className="flex items-center gap-3 shrink-0">
-            <button
-              onClick={() => setActiveTab('optimization')}
-              className="bg-[#526B50] hover:bg-[#41553F] text-white text-xs font-semibold px-4 py-2.5 rounded-lg flex items-center gap-2 transition-all shadow-xs cursor-pointer"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Run Constrained Optimizer</span>
-            </button>
-          </div>
-        </div>
+        {activeTab === 'inventory' && (
+          <InventoryManager
+            batches={batches}
+            products={products}
+            warehouses={warehouses}
+          />
+        )}
 
-        {/* Tab content placeholder for upcoming milestones */}
-        <div className="p-8 bg-white border border-[#E5E6E0] rounded-2xl shadow-xs">
-          <div className="max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#EBF1EA] text-[#526B50] text-xs font-medium mb-3">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Milestone 2 Verified: Landing Page & Workspace Shell Active</span>
-            </div>
-            <h2 className="text-xl font-bold text-[#191B19] mb-2">
-              Distribution Engine Foundation Established
-            </h2>
-            <p className="text-sm text-[#70736E] leading-relaxed mb-6">
-              The application foundation, landing page matching the visual reference, and interactive workspace routing are live. The FMCG master data schemas, synthetic realistic dataset, OR-Tools mixed-integer optimization engine, and side-by-side baseline audit will be integrated in the subsequent milestones.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl bg-[#F7F7F4] border border-[#E5E6E0]">
-                <div className="text-xs text-[#70736E]">Target Model</div>
-                <div className="text-sm font-bold text-[#191B19] mt-0.5">OR-Tools MILP Solver</div>
-              </div>
-              <div className="p-4 rounded-xl bg-[#F7F7F4] border border-[#E5E6E0]">
-                <div className="text-xs text-[#70736E]">Expiry Policy</div>
-                <div className="text-sm font-bold text-[#191B19] mt-0.5">FEFO Batch Prioritization</div>
-              </div>
-              <div className="p-4 rounded-xl bg-[#F7F7F4] border border-[#E5E6E0]">
-                <div className="text-xs text-[#70736E]">Benchmark Strategy</div>
-                <div className="text-sm font-bold text-[#191B19] mt-0.5">Demand-Priority Baseline</div>
-              </div>
-            </div>
-          </div>
-        </div>
+        {activeTab === 'demand' && (
+          <DemandForecaster
+            products={products}
+            destinations={destinations}
+            demandRecords={demand}
+          />
+        )}
+
+        {activeTab === 'optimization' && (
+          <OptimizationConsole
+            products={products}
+            warehouses={warehouses}
+            destinations={destinations}
+            onNavigateToComparison={() => setActiveTab('comparison')}
+          />
+        )}
+
+        {activeTab === 'comparison' && (
+          <ComparisonAuditView />
+        )}
       </main>
     </div>
   );
