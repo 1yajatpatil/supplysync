@@ -1,0 +1,24 @@
+{
+  "name": "supplysync",
+  "version": "1.0.0",
+  "description": "AI-Powered FMCG Distribution Intelligence & Inventory Optimization Engine",
+  "scripts": {
+    "start": "node server/dist/index.js",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "dev:engine": "source .venv/bin/activate && uvicorn engine.main:app --host 0.0.0.0 --port 8000 --reload",
+    "test:engine": "source .venv/bin/activate && pytest engine/tests -v",
+    "build:client": "cd client && npm run build",
+    "build:server": "cd server && npm run build"
+  },
+  "keywords": [
+    "fmcg",
+    "supply-chain",
+    "optimization",
+    "inventory",
+    "or-tools",
+    "distribution"
+  ],
+  "author": "SupplySync Team",
+  "license": "MIT"
+}
