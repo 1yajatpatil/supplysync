@@ -63,7 +63,8 @@ export function App() {
   if (currentView === 'landing') {
     return (
       <LandingPage 
-        onStartDemo={() => {
+        onStartDemo={(tab) => {
+          if (tab) setActiveTab(tab);
           setCurrentView('app');
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
