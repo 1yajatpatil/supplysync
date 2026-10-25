@@ -1,6 +1,6 @@
 /**
  * SupplySync Client API Service
- * Connects to the Express/Node.js API gateway with resilient fallback demo dataset.
+ * Connects to the Express/Node.js API gateway with authentic session management.
  */
 
 export interface Product {
@@ -103,13 +103,23 @@ export interface OptimizationMetrics {
   fulfillment_rate_pct: number;
   total_transport_cost: number;
   avg_unit_transport_cost: number;
+  average_unit_transport_cost?: number;
   active_shipment_lanes: number;
   expiring_stock_utilized_units: number;
+  near_expiry_units_utilized?: number;
   estimated_avoided_waste_units: number;
   potential_waste_unallocated_units: number;
   destinations_with_shortages: number;
   solver_runtime_ms: number;
   solver_status: string;
+  total_shortage_penalty?: number;
+  total_economic_cost?: number;
+  estimated_shortage_cost?: number;
+  total_evaluated_cost?: number;
+  service_level_target_met?: boolean;
+  status?: string;
+  recommendations_count?: number;
+  shortage_count?: number;
 }
 
 export interface OptimizationPlan {
@@ -117,25 +127,43 @@ export interface OptimizationPlan {
   strategy: 'baseline' | 'optimized_ortools';
   created_at: string;
   planning_horizon_days: number;
+  data_source?: string;
   metrics: OptimizationMetrics;
   recommendations: ShipmentRecommendation[];
   shortages: ShortageDetail[];
 }
 
 export interface ComparisonAudit {
+  audit_id?: string;
+  timestamp?: string;
+  data_source?: string;
   baseline_metrics: OptimizationMetrics;
   optimized_metrics: OptimizationMetrics;
   cost_savings_amount: number;
   cost_reduction_pct: number;
+  cost_savings_pct?: number;
   fulfillment_improvement_pct: number;
   stockout_reduction_pct: number;
   waste_reduction_units: number;
   waste_reduction_pct: number;
-  runtime_comparison_ms: {
+  expiry_waste_reduction_units?: number;
+  runtime_comparison_ms?: {
     baseline_heuristic_ms: number;
     ortools_milp_ms: number;
   };
   summary_verdict: string;
+  total_evaluated_savings?: number;
+  total_evaluated_savings_pct?: number;
+  outcome_status?: 'equal' | 'optimizer_superior' | 'tradeoff' | 'optimizer_inferior';
+  economic_breakdown?: {
+    freight_savings_amount: number;
+    freight_savings_pct: number;
+    shortage_savings_amount: number;
+    baseline_total_economic_cost: number;
+    optimizer_total_economic_cost: number;
+    total_economic_savings_amount: number;
+    total_economic_savings_pct: number;
+  };
 }
 
 export interface DatasetStatus {
@@ -166,26 +194,104 @@ export interface ForecastResult {
   chronological_validation_note: string;
 }
 
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  created_at: string;
+}
+
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 
-// Direct fallback mock data for standalone client runs
-import { FALLBACK_MASTER_DATA, computeLocalBaseline, computeLocalOptimized, computeLocalComparison } from './mockData';
+// ----------------------------------------------------
+// Authentication API
+// ----------------------------------------------------
+
+export async function loginApi(email: string, password: string): Promise<{ user: User; token: string; message: string }> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, password })
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.message || data.error || `Authentication failed (${res.status})`);
+  }
+  return await res.json();
+}
+
+export async function registerApi(email: string, password: string, name?: string): Promise<{ user: User; token: string; message: string }> {
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, password, name })
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.message || data.error || `Registration failed (${res.status})`);
+  }
+  return await res.json();
+}
+
+export async function logoutApi(): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/auth/logout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include'
+  });
+  if (!res.ok) {
+    throw new Error(`Logout failed (${res.status})`);
+  }
+  return await res.json();
+}
+
+export async function demoLoginApi(): Promise<{ user: User; token: string; message: string }> {
+  const res = await fetch(`${API_BASE}/auth/demo-login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include'
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.message || data.error || `Demo authentication failed (${res.status})`);
+  }
+  return await res.json();
+}
+
+export async function getMeApi(): Promise<{ user: User }> {
+  const res = await fetch(`${API_BASE}/auth/me`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include'
+  });
+  if (!res.ok) {
+    throw new Error('Not authenticated');
+  }
+  return await res.json();
+}
+
+// ----------------------------------------------------
+// Master Data & Status APIs
+// ----------------------------------------------------
 
 export async function fetchDatasetStatus(): Promise<DatasetStatus> {
   try {
-    const res = await fetch(`${API_BASE}/dataset-status`);
+    const res = await fetch(`${API_BASE}/dataset-status`, { credentials: 'include' });
     if (res.ok) return await res.json();
-  } catch (e) {
-    console.warn('Dataset status endpoint unreachable.');
+  } catch (err: any) {
+    console.warn('Dataset status endpoint unreachable:', err?.message);
   }
   return {
     available: true,
     active_source: 'sample',
-    message: 'Local sample M5 forecasting scenario active.'
+    message: 'Real M5 retail sales dataset active (Walmart Historical Sample).'
   };
 }
 
-export async function fetchMasterData(dataSource = 'synthetic', horizonDays = 7): Promise<{
+export async function fetchMasterData(_dataSource = 'm5', horizonDays = 7): Promise<{
   products: Product[];
   warehouses: Warehouse[];
   destinations: Destination[];
@@ -195,94 +301,175 @@ export async function fetchMasterData(dataSource = 'synthetic', horizonDays = 7)
   data_source?: string;
   horizon_days?: number;
 }> {
-  try {
-    const res = await fetch(`${API_BASE}/master-data?data_source=${dataSource}&horizon=${horizonDays}`);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (e) {
-    console.warn('API Gateway offline, using embedded FMCG simulation dataset.');
+  const res = await fetch(`${API_BASE}/master-data?data_source=m5&horizon=${horizonDays}`, {
+    credentials: 'include'
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Failed to load Real M5 master data: ${res.status} ${errText}`);
   }
-  return FALLBACK_MASTER_DATA;
+  return await res.json();
 }
 
-export async function runBaselinePlan(horizonDays = 7, dataSource = 'synthetic'): Promise<OptimizationPlan> {
-  try {
-    const res = await fetch(`${API_BASE}/optimization/baseline`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planning_horizon_days: horizonDays, data_source: dataSource })
-    });
-    if (res.ok) return await res.json();
-  } catch (e) {
-    console.warn('Engine offline, executing client-side baseline calculation.');
-  }
-  return computeLocalBaseline(horizonDays);
+export interface DatasetValidationSummary {
+  products_count: number;
+  warehouses_count: number;
+  destinations_count: number;
+  batches_count: number;
+  routes_count: number;
+  demand_records_count: number;
+  total_inventory_units: number;
+  total_forecasted_demand: number;
+  expired_batches_count: number;
 }
 
-export async function runOptimizedPlan(horizonDays = 7, dataSource = 'synthetic'): Promise<OptimizationPlan> {
-  try {
-    const res = await fetch(`${API_BASE}/optimization/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planning_horizon_days: horizonDays, data_source: dataSource })
-    });
-    if (res.ok) return await res.json();
-  } catch (e) {
-    console.warn('Engine offline, executing client-side constrained calculation.');
-  }
-  return computeLocalOptimized(horizonDays);
+export interface DatasetValidationResponse {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  summary: DatasetValidationSummary;
 }
 
-export async function runComparisonAudit(horizonDays = 7, dataSource = 'synthetic'): Promise<ComparisonAudit> {
-  try {
-    const res = await fetch(`${API_BASE}/optimization/compare`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planning_horizon_days: horizonDays, data_source: dataSource })
-    });
-    if (res.ok) return await res.json();
-  } catch (e) {
-    console.warn('Engine offline, calculating local comparison.');
+export interface CustomDatasetBundle {
+  products?: Product[];
+  warehouses?: Warehouse[];
+  destinations?: Destination[];
+  batches?: InventoryBatch[];
+  routes?: Route[];
+  demand?: DemandRecord[];
+}
+
+export async function validateDataset(data: {
+  products: any[];
+  warehouses: any[];
+  destinations: any[];
+  batches: any[];
+  routes: any[];
+  demand_records: any[];
+}): Promise<DatasetValidationResponse> {
+  const res = await fetch(`${API_BASE}/dataset/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Dataset validation failed: ${res.status} ${errText}`);
   }
-  return computeLocalComparison(horizonDays);
+  return await res.json();
+}
+
+export async function runBaselinePlan(
+  horizonDays = 7, 
+  dataSource = 'm5',
+  customData?: CustomDatasetBundle
+): Promise<OptimizationPlan> {
+  const payload: any = { 
+    planning_horizon_days: horizonDays, 
+    data_source: dataSource 
+  };
+  if (customData) {
+    payload.custom_products = customData.products;
+    payload.custom_warehouses = customData.warehouses;
+    payload.custom_destinations = customData.destinations;
+    payload.custom_batches = customData.batches;
+    payload.custom_routes = customData.routes;
+    payload.custom_demand = customData.demand;
+  }
+  const res = await fetch(`${API_BASE}/optimization/baseline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Baseline computation failed: ${res.status} ${errText}`);
+  }
+  return await res.json();
+}
+
+export async function runOptimizedPlan(
+  horizonDays = 7, 
+  dataSource = 'm5',
+  customData?: CustomDatasetBundle
+): Promise<OptimizationPlan> {
+  const payload: any = { 
+    planning_horizon_days: horizonDays, 
+    data_source: dataSource 
+  };
+  if (customData) {
+    payload.custom_products = customData.products;
+    payload.custom_warehouses = customData.warehouses;
+    payload.custom_destinations = customData.destinations;
+    payload.custom_batches = customData.batches;
+    payload.custom_routes = customData.routes;
+    payload.custom_demand = customData.demand;
+  }
+  const res = await fetch(`${API_BASE}/optimization/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OR-Tools optimization failed: ${res.status} ${errText}`);
+  }
+  return await res.json();
+}
+
+export async function runComparisonAudit(
+  horizonDays = 7, 
+  dataSource = 'm5',
+  customData?: CustomDatasetBundle
+): Promise<ComparisonAudit> {
+  const payload: any = { 
+    planning_horizon_days: horizonDays, 
+    data_source: dataSource 
+  };
+  if (customData) {
+    payload.custom_products = customData.products;
+    payload.custom_warehouses = customData.warehouses;
+    payload.custom_destinations = customData.destinations;
+    payload.custom_batches = customData.batches;
+    payload.custom_routes = customData.routes;
+    payload.custom_demand = customData.demand;
+  }
+  const res = await fetch(`${API_BASE}/optimization/compare`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Optimization comparison failed: ${res.status} ${errText}`);
+  }
+  return await res.json();
 }
 
 export async function fetchForecast(
   productId: string, 
   destinationId: string, 
   horizonDays = 7,
-  dataSource = 'synthetic'
+  _dataSource = 'm5'
 ): Promise<ForecastResult> {
-  try {
-    const res = await fetch(`${API_BASE}/forecast/predict`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        product_id: productId, 
-        destination_id: destinationId, 
-        horizon_days: horizonDays,
-        data_source: dataSource
-      })
-    });
-    if (res.ok) return await res.json();
-  } catch (e) {
-    console.warn('Engine offline, using local forecast model.');
+  const res = await fetch(`${API_BASE}/forecast/predict`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ 
+      product_id: productId, 
+      destination_id: destinationId, 
+      horizon_days: horizonDays,
+      data_source: 'm5'
+    })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Demand forecasting failed on Real M5 time-series: ${res.status} ${errText}`);
   }
-  return {
-    product_id: productId,
-    destination_id: destinationId,
-    data_source: dataSource,
-    horizon_days: horizonDays,
-    forecasted_demand_total: horizonDays * 170,
-    historical_avg_daily: 170.0,
-    selected_model: "Seasonal Time-Series Regression",
-    historical_series_sample: [],
-    projected_daily: Array(horizonDays).fill(170),
-    evaluation_metrics: {
-      baseline_sma: { mae: 14.2, rmse: 18.5, wape_pct: 10.4 },
-      ml_regression: { mae: 9.8, rmse: 12.1, wape_pct: 7.2 }
-    },
-    chronological_validation_note: "Evaluated strictly on holdout historical periods without future lookahead."
-  };
+  return await res.json();
 }

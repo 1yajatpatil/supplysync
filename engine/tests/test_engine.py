@@ -126,12 +126,13 @@ def test_m5_logistics_mapping():
 
 def test_planning_horizon_scaling_7_14_30():
     """Verify that changing planning horizon genuinely scales forecasted demand."""
-    products = get_demo_products()
-    destinations = get_demo_destinations()
+    from engine.m5_logistics import get_m5_products, get_m5_destinations
+    products = get_m5_products()
+    destinations = get_m5_destinations()
 
-    d7 = generate_forecasted_demand_records(products, destinations, horizon_days=7, data_source="synthetic")
-    d14 = generate_forecasted_demand_records(products, destinations, horizon_days=14, data_source="synthetic")
-    d30 = generate_forecasted_demand_records(products, destinations, horizon_days=30, data_source="synthetic")
+    d7 = generate_forecasted_demand_records(products, destinations, horizon_days=7, data_source="m5")
+    d14 = generate_forecasted_demand_records(products, destinations, horizon_days=14, data_source="m5")
+    d30 = generate_forecasted_demand_records(products, destinations, horizon_days=30, data_source="m5")
 
     sum_7 = sum(d.forecasted_demand for d in d7)
     sum_14 = sum(d.forecasted_demand for d in d14)
@@ -254,10 +255,15 @@ def test_comparison_audit_metrics():
 
 
 def test_demand_forecasting_evaluation():
-    """Verify chronological demand backtesting."""
-    res = evaluate_forecasting_models(product_id="PROD-001", destination_id="DEST-PUNE", horizon_days=7)
-    assert res["product_id"] == "PROD-001"
-    assert res["destination_id"] == "DEST-PUNE"
+    """Verify chronological demand backtesting on real M5 item and store."""
+    from engine.m5_loader import m5_loader
+    stores, items = m5_loader.get_available_entities()
+    assert len(stores) > 0 and len(items) > 0
+    test_prod = items[0]
+    test_dest = stores[0]
+    res = evaluate_forecasting_models(product_id=test_prod, destination_id=test_dest, horizon_days=7, data_source="m5")
+    assert res["product_id"] == test_prod
+    assert res["destination_id"] == test_dest
     assert res["forecasted_demand_total"] > 0
     assert "baseline_sma" in res["evaluation_metrics"]
     assert "ml_regression" in res["evaluation_metrics"]
@@ -267,29 +273,42 @@ def test_demand_forecasting_evaluation():
 
 def test_api_endpoints():
     """Verify full FastAPI lifecycle."""
-    # 1. Master data endpoint
-    resp_master = client.get("/api/master-data?data_source=synthetic&horizon=7")
+    # 1. Master data endpoint - synthetic requests are rejected with 400
+    resp_synth = client.get("/api/master-data?data_source=synthetic&horizon=7")
+    assert resp_synth.status_code == 400
+    assert "Synthetic FMCG data has been deprecated" in resp_synth.json()["detail"]
+
+    # 2. Master data endpoint for M5 (default and explicit)
+    resp_master = client.get("/api/master-data?horizon=7")
     assert resp_master.status_code == 200
     data = resp_master.json()
+    assert data["data_source"] == "m5"
     assert "products" in data
     assert "warehouses" in data
 
-    # 2. Master data endpoint for M5
     resp_m5 = client.get("/api/master-data?data_source=m5&horizon=14")
     assert resp_m5.status_code == 200
     data_m5 = resp_m5.json()
     assert data_m5["data_source"] == "m5"
     assert data_m5["horizon_days"] == 14
 
-    # 3. Compare endpoint
-    resp_compare = client.post("/api/compare", json={"planning_horizon_days": 7, "data_source": "synthetic"})
+    # 3. Compare endpoint - rejects synthetic
+    resp_compare_bad = client.post("/api/compare", json={"planning_horizon_days": 7, "data_source": "synthetic"})
+    assert resp_compare_bad.status_code == 400
+
+    # 3b. Compare endpoint with M5
+    resp_compare = client.post("/api/compare", json={"planning_horizon_days": 7, "data_source": "m5"})
     assert resp_compare.status_code == 200
     compare_data = resp_compare.json()
     assert "baseline_metrics" in compare_data
     assert "optimized_metrics" in compare_data
 
-    # 4. Export CSV endpoint
-    resp_opt = client.post("/api/optimize", json={"planning_horizon_days": 7, "data_source": "synthetic"})
+    # 4. Optimize - rejects synthetic
+    resp_opt_bad = client.post("/api/optimize", json={"planning_horizon_days": 7, "data_source": "synthetic"})
+    assert resp_opt_bad.status_code == 400
+
+    # 4b. Optimize and Export CSV endpoint with M5
+    resp_opt = client.post("/api/optimize", json={"planning_horizon_days": 7, "data_source": "m5"})
     assert resp_opt.status_code == 200
     opt_plan = resp_opt.json()
     run_id = opt_plan["run_id"]
@@ -300,3 +319,25 @@ def test_api_endpoints():
     csv_text = resp_export.text
     assert "Recommendation ID" in csv_text
     assert "Allocated Quantity" in csv_text
+
+
+def test_repeated_optimization_runs_fresh_invocation():
+    """Verify that repeated optimization calls execute fresh solver runs with unique run IDs."""
+    resp1 = client.post("/api/optimize", json={"planning_horizon_days": 7, "data_source": "m5"})
+    assert resp1.status_code == 200
+    plan1 = resp1.json()
+
+    resp2 = client.post("/api/optimize", json={"planning_horizon_days": 7, "data_source": "m5"})
+    assert resp2.status_code == 200
+    plan2 = resp2.json()
+
+    # Each execution MUST generate a unique run ID and valid timestamp
+    assert plan1["run_id"] != plan2["run_id"]
+    assert "created_at" in plan1 and "created_at" in plan2
+    assert plan1["metrics"]["solver_runtime_ms"] > 0
+    assert plan2["metrics"]["solver_runtime_ms"] > 0
+
+    # On deterministic M5 7D data, the optimal objective value and fulfillment coincide
+    assert plan1["metrics"]["total_transport_cost"] == plan2["metrics"]["total_transport_cost"]
+    assert plan1["metrics"]["total_fulfilled_units"] == plan2["metrics"]["total_fulfilled_units"]
+    assert len(plan1["recommendations"]) == len(plan2["recommendations"])

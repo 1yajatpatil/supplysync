@@ -113,11 +113,15 @@ M5_STORE_METADATA = {
 }
 
 
-def get_m5_destinations(loader: M5DataLoader) -> List[Destination]:
+def get_m5_destinations(loader: Optional[M5DataLoader] = None) -> List[Destination]:
     """
     Builds SupplySync Destination objects from real M5 store identifiers.
     Preserves exact store_id (e.g. CA_1, TX_1).
     """
+    if loader is None:
+        from .m5_loader import m5_loader
+        loader = m5_loader
+
     available_stores, _ = loader.get_available_entities()
     destinations = []
     
@@ -147,51 +151,74 @@ def get_m5_destinations(loader: M5DataLoader) -> List[Destination]:
     return destinations
 
 
-def get_m5_products(loader: M5DataLoader) -> List[Product]:
+def get_m5_products(loader: Optional[M5DataLoader] = None) -> List[Product]:
     """
     Builds SupplySync Product objects preserving real M5 item_id (e.g. FOODS_1_001).
-    Distinguishes perishable food (with FEFO shelf life) from non-perishables.
+    Integrates observed M5 retail selling prices from sell_prices.csv.
+    Distinguishes observed prices from estimated shortage penalties and carrying costs.
     """
+    if loader is None:
+        from .m5_loader import m5_loader
+        loader = m5_loader
+
     _, available_items = loader.get_available_entities()
     products = []
 
     for item_id in available_items:
-        # Determine category and shelf life scenario honestly
+        # 1. Query real observed M5 selling price (average across stores)
+        observed_price = loader.get_price(item_id)
+        
+        # 2. Determine category and shelf life scenario
         if "FOODS_1" in item_id:
             category = "M5 Foods - Fresh Produce & Dairy"
             shelf_life = 14  # Perishable FEFO candidate
             unit_weight = 1.0
-            holding_cost = 0.12
-            shortage_pen = 40.0
+            default_holding = 0.12
+            default_shortage = 40.0
             min_req = 3
         elif "FOODS_2" in item_id:
             category = "M5 Foods - Refrigerated Grocery"
             shelf_life = 30
             unit_weight = 1.5
-            holding_cost = 0.10
-            shortage_pen = 35.0
+            default_holding = 0.10
+            default_shortage = 35.0
             min_req = 5
         elif "FOODS_3" in item_id:
             category = "M5 Foods - Packaged Dry Goods"
             shelf_life = 90
             unit_weight = 2.0
-            holding_cost = 0.05
-            shortage_pen = 25.0
+            default_holding = 0.05
+            default_shortage = 25.0
             min_req = 10
         elif "HOBBIES" in item_id:
             category = "M5 General Merchandise - Hobbies"
             shelf_life = 365  # Non-perishable
             unit_weight = 0.8
-            holding_cost = 0.04
-            shortage_pen = 20.0
+            default_holding = 0.04
+            default_shortage = 20.0
             min_req = 30
         else:
             category = "M5 General Merchandise - Household"
             shelf_life = 365  # Non-perishable
             unit_weight = 1.2
-            holding_cost = 0.05
-            shortage_pen = 22.0
+            default_holding = 0.05
+            default_shortage = 22.0
             min_req = 30
+
+        # Calibrate economic parameters from real price if observed, else fallback to configured
+        if observed_price is not None and observed_price > 0:
+            price_source = "real_m5"
+            # Estimated shortage penalty: lost revenue + stockout customer dissatisfaction
+            shortage_pen = round(observed_price * 2.5, 2)
+            # Estimated daily holding cost: 15% annual carrying cost rate / 365
+            holding_cost = round(observed_price * 0.15 / 365, 4)
+            # Estimated waste cost per spoiled unit
+            waste_cost = round(observed_price, 2)
+        else:
+            price_source = "configured"
+            shortage_pen = default_shortage
+            holding_cost = default_holding
+            waste_cost = round(default_shortage * 0.5, 2)
 
         # Create readable commercial label while preserving item_id
         human_name = f"{item_id} ({category.split(' - ')[-1]})"
@@ -206,7 +233,11 @@ def get_m5_products(loader: M5DataLoader) -> List[Product]:
                 shelf_life_days=shelf_life,
                 holding_cost_per_day=holding_cost,
                 shortage_penalty_per_unit=shortage_pen,
-                min_shelf_life_required_days=min_req
+                min_shelf_life_required_days=min_req,
+                observed_sell_price=observed_price,
+                price_source=price_source,
+                estimated_margin_pct=0.25,
+                waste_cost_per_unit=waste_cost
             )
         )
     return products
@@ -249,7 +280,7 @@ def get_m5_warehouses() -> List[Warehouse]:
 
 def get_m5_routes(destinations: List[Destination], warehouses: List[Warehouse]) -> List[Route]:
     """
-    Configured freight corridors and tariffs connecting regional DCs to M5 stores.
+    Configured freight corridors, tariffs, and dual unit & weight capacities connecting regional DCs to M5 stores.
     """
     routes = []
     
@@ -268,11 +299,13 @@ def get_m5_routes(destinations: List[Destination], warehouses: List[Warehouse]) 
                 dist_km = 95.0
                 transit_days = 1
                 corridor_cap = 3000
+                corridor_weight_kg = 4500.0
             elif is_adjacent:
                 unit_cost = 3.20
                 dist_km = 280.0
                 transit_days = 1
                 corridor_cap = 2000
+                corridor_weight_kg = 3000.0
             else:
                 # Inter-region long-haul
                 if wh.id == "WH-M5-PACIFIC" and dest.state == "Texas":
@@ -280,21 +313,25 @@ def get_m5_routes(destinations: List[Destination], warehouses: List[Warehouse]) 
                     dist_km = 2200.0
                     transit_days = 3
                     corridor_cap = 800
+                    corridor_weight_kg = 1200.0
                 elif wh.id == "WH-M5-TEXAS" and dest.state == "California":
                     unit_cost = 7.10
                     dist_km = 2300.0
                     transit_days = 3
                     corridor_cap = 700
+                    corridor_weight_kg = 1050.0
                 elif wh.id == "WH-M5-MIDWEST" and dest.state == "California":
                     unit_cost = 9.40
                     dist_km = 3100.0
                     transit_days = 4
                     corridor_cap = 600
+                    corridor_weight_kg = 900.0
                 else:
                     unit_cost = 5.50
                     dist_km = 1600.0
                     transit_days = 2
                     corridor_cap = 1000
+                    corridor_weight_kg = 1500.0
 
             routes.append(
                 Route(
@@ -303,7 +340,8 @@ def get_m5_routes(destinations: List[Destination], warehouses: List[Warehouse]) 
                     unit_cost=unit_cost,
                     distance_km=dist_km,
                     transit_time_days=transit_days,
-                    max_capacity_units=corridor_cap
+                    max_capacity_units=corridor_cap,
+                    max_capacity_kg=corridor_weight_kg
                 )
             )
     return routes

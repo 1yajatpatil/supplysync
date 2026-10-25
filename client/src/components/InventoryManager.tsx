@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Box, AlertTriangle, AlertCircle, CheckCircle2, Filter, Clock, ShieldAlert } from 'lucide-react';
+import { Box, AlertCircle, CheckCircle2, Clock, ShieldAlert } from 'lucide-react';
 import { InventoryBatch, Product, Warehouse } from '../api';
 
 interface InventoryManagerProps {
@@ -83,7 +83,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         {/* Filters */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[#F0F0EB]">
           <div>
-            <h3 className="text-lg font-bold text-[#191B19]">FMCG Batch Inventory Ledger</h3>
+            <h3 className="text-lg font-bold text-[#191B19]">Retail Batch Inventory Ledger (M5 Network)</h3>
             <p className="text-xs text-[#70736E]">Inspect physical batch quantities, manufacturing dates, and shelf-life horizons.</p>
           </div>
 

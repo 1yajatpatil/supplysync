@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   BarChart3, 
   Box, 
@@ -8,40 +8,30 @@ import {
   ChevronRight,
   Menu,
   X,
-  Lock,
-  Layers,
   Scale,
   Clock,
-  ShieldCheck,
-  TrendingDown,
-  Warehouse,
-  Store,
-  DollarSign,
   AlertTriangle,
+  Warehouse,
   Play,
-  RotateCcw,
-  Download
+  Download,
+  DollarSign
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { UserProfileMenu } from './UserProfileMenu';
 
 interface LandingPageProps {
+  onGetStarted: () => void;
   onStartDemo: (tab?: 'overview' | 'inventory' | 'demand' | 'optimization' | 'comparison') => void;
   onExploreFeatures?: () => void;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onStartDemo, onExploreFeatures }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ 
+  onGetStarted, 
+  onStartDemo, 
+  onExploreFeatures: _onExploreFeatures 
+}) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-
-  // Close login modal on Escape key press
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isLoginModalOpen) {
-        setIsLoginModalOpen(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isLoginModalOpen]);
+  const { user, openAuthModal, requireAuth } = useAuth();
 
   // Smooth scroll handler with header offset
   const scrollToSection = (sectionId: string) => {
@@ -109,31 +99,47 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartDemo, onExplore
 
           {/* Action CTAs */}
           <div className="hidden sm:flex items-center gap-4">
-            <button 
-              type="button"
-              onClick={() => setIsLoginModalOpen(true)}
-              className="text-[15px] font-medium text-[#191B19] hover:text-[#526B50] transition-colors cursor-pointer px-3 py-1.5 rounded-lg"
-            >
-              Login
-            </button>
-            <button
-              type="button"
-              onClick={() => onStartDemo('optimization')}
-              className="bg-[#191B19] hover:bg-[#2E312E] text-white text-[14px] font-medium px-5 py-2.5 rounded-full flex items-center gap-2 transition-all shadow-xs active:scale-95 cursor-pointer"
-            >
-              <span>Get Started</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+            {user ? (
+              <>
+                <UserProfileMenu />
+                <button
+                  type="button"
+                  onClick={onGetStarted}
+                  className="bg-[#191B19] hover:bg-[#2E312E] text-white text-[14px] font-medium px-5 py-2.5 rounded-full flex items-center gap-2 transition-all shadow-xs active:scale-95 cursor-pointer"
+                >
+                  <span>Dashboard</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </>
+            ) : (
+              <>
+                <button 
+                  type="button"
+                  onClick={() => openAuthModal('login')}
+                  className="text-[15px] font-medium text-[#191B19] hover:text-[#526B50] transition-colors cursor-pointer px-3 py-1.5 rounded-lg"
+                >
+                  Login
+                </button>
+                <button
+                  type="button"
+                  onClick={() => requireAuth(onGetStarted)}
+                  className="bg-[#191B19] hover:bg-[#2E312E] text-white text-[14px] font-medium px-5 py-2.5 rounded-full flex items-center gap-2 transition-all shadow-xs active:scale-95 cursor-pointer"
+                >
+                  <span>Get Started</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </>
+            )}
           </div>
 
           {/* Mobile Menu Button */}
           <div className="flex md:hidden items-center gap-2">
             <button
               type="button"
-              onClick={() => onStartDemo('optimization')}
+              onClick={() => requireAuth(onGetStarted)}
               className="bg-[#191B19] text-white text-xs font-semibold px-3 py-2 rounded-full flex items-center gap-1.5 cursor-pointer"
             >
-              <span>Console</span>
+              <span>Start</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
             <button
@@ -182,20 +188,37 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartDemo, onExplore
               </a>
             </div>
             <div className="pt-2 flex items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => { setIsMobileMenuOpen(false); setIsLoginModalOpen(true); }}
-                className="w-1/2 text-center py-2.5 rounded-xl border border-[#E5E6E0] bg-white text-xs font-semibold text-[#191B19]"
-              >
-                Login
-              </button>
-              <button
-                type="button"
-                onClick={() => { setIsMobileMenuOpen(false); onStartDemo('optimization'); }}
-                className="w-1/2 text-center py-2.5 rounded-xl bg-[#526B50] text-white text-xs font-semibold"
-              >
-                Get Started
-              </button>
+              {user ? (
+                <>
+                  <div className="w-1/2">
+                    <UserProfileMenu />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setIsMobileMenuOpen(false); onGetStarted(); }}
+                    className="w-1/2 text-center py-2.5 rounded-xl bg-[#526B50] text-white text-xs font-semibold cursor-pointer"
+                  >
+                    Dashboard
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => { setIsMobileMenuOpen(false); openAuthModal('login'); }}
+                    className="w-1/2 text-center py-2.5 rounded-xl border border-[#E5E6E0] bg-white text-xs font-semibold text-[#191B19] cursor-pointer"
+                  >
+                    Login
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setIsMobileMenuOpen(false); requireAuth(onGetStarted); }}
+                    className="w-1/2 text-center py-2.5 rounded-xl bg-[#526B50] text-white text-xs font-semibold cursor-pointer"
+                  >
+                    Get Started
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -755,81 +778,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartDemo, onExplore
           <div>Triwizathon 2026 • Problem Statement 2 Competition Entry</div>
         </div>
       </footer>
-
-      {/* Login / Authentication Modal Dialog */}
-      {isLoginModalOpen && (
-        <div 
-          className="fixed inset-0 z-50 bg-[#191B19]/40 backdrop-blur-xs flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="login-modal-title"
-        >
-          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full border border-[#E5E6E0] shadow-2xl space-y-6">
-            <div className="flex items-start justify-between">
-              <div className="w-12 h-12 rounded-2xl bg-[#EBF1EA] text-[#526B50] flex items-center justify-center">
-                <Lock className="w-6 h-6" />
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsLoginModalOpen(false)}
-                className="p-2 rounded-xl text-[#70736E] hover:text-[#191B19] hover:bg-[#F7F7F4] transition-colors cursor-pointer"
-                aria-label="Close dialog"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div>
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#EBF1EA] text-[#526B50] text-[11px] font-bold uppercase tracking-wider mb-2">
-                <span>Demo Evaluation Access</span>
-              </div>
-              <h3 id="login-modal-title" className="text-xl font-bold text-[#191B19]">
-                SupplySync Authentication
-              </h3>
-              <p className="text-xs text-[#70736E] mt-2 leading-relaxed">
-                For the Triwizathon 2026 competition evaluation, user authentication is pre-configured in <strong>Guest Operator Mode</strong>. You have full access to explore the distribution network, demand forecasts, OR-Tools optimization, and export planning schedules.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-[#F7F7F4] border border-[#E5E6E0] space-y-2 text-xs">
-              <div className="flex justify-between text-[#70736E]">
-                <span>Evaluator Role:</span>
-                <span className="font-semibold text-[#191B19]">Senior Supply Chain Planner</span>
-              </div>
-              <div className="flex justify-between text-[#70736E]">
-                <span>Permissions:</span>
-                <span className="font-semibold text-[#526B50]">Full Optimization & Export Access</span>
-              </div>
-              <div className="flex justify-between text-[#70736E]">
-                <span>Session:</span>
-                <span className="font-mono text-[#191B19]">ACTIVE_EVAL_MODE</span>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsLoginModalOpen(false);
-                  onStartDemo('optimization');
-                }}
-                className="w-full bg-[#191B19] hover:bg-[#2E312E] text-white text-xs font-semibold py-3.5 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer active:scale-95"
-              >
-                <span>Continue as Supply Chain Operator</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsLoginModalOpen(false)}
-                className="w-full bg-white hover:bg-[#F7F7F4] text-[#70736E] text-xs font-medium py-2.5 rounded-xl border border-[#E5E6E0] transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

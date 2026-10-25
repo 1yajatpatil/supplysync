@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Play, 
   RotateCcw, 
@@ -10,15 +10,12 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
-  Layers,
-  ShieldCheck,
   Package,
   Eye,
   SlidersHorizontal,
   ChevronLeft,
   ChevronRight,
-  Database,
-  Info
+  Database
 } from 'lucide-react';
 import { 
   OptimizationPlan, 
@@ -34,8 +31,7 @@ interface OptimizationConsoleProps {
   products: Product[];
   warehouses: Warehouse[];
   destinations: Destination[];
-  dataSource?: 'synthetic' | 'm5';
-  onDataSourceChange?: (source: 'synthetic' | 'm5') => void;
+  dataSource?: 'm5';
   onPlanGenerated?: (plan: OptimizationPlan) => void;
   onNavigateToComparison?: () => void;
 }
@@ -44,8 +40,7 @@ export const OptimizationConsole: React.FC<OptimizationConsoleProps> = ({
   products,
   warehouses,
   destinations,
-  dataSource = 'synthetic',
-  onDataSourceChange,
+  dataSource = 'm5',
   onPlanGenerated,
   onNavigateToComparison
 }) => {
@@ -73,64 +68,125 @@ export const OptimizationConsole: React.FC<OptimizationConsoleProps> = ({
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+  const [_executionCount, setExecutionCount] = useState<number>(0);
+  const [justUpdated, setJustUpdated] = useState<boolean>(false);
 
-  const handleRunOptimizer = async (targetHorizon = horizonDays, targetSource = dataSource) => {
+  const activeRequestIdRef = useRef<number>(0);
+
+  const handleRunOptimizer = async (targetHorizon = horizonDays, targetSource = 'm5') => {
+    const reqId = ++activeRequestIdRef.current;
     setLoading(true);
     setExecutionStatus(null);
     try {
+      // Trigger real optimization request to OR-Tools SCIP solver
       const plan = await runOptimizedPlan(targetHorizon, targetSource);
-      setCurrentPlan(plan);
+
+      // Guard against out-of-order race conditions: discard response if a newer request was dispatched
+      if (reqId !== activeRequestIdRef.current) return;
+
+      // Truthfully verify if allocation coincides with previous solution
+      const isSamePlan = Boolean(
+        currentPlan &&
+        currentPlan.strategy === plan.strategy &&
+        currentPlan.planning_horizon_days === plan.planning_horizon_days &&
+        currentPlan.metrics.total_transport_cost === plan.metrics.total_transport_cost &&
+        currentPlan.metrics.total_fulfilled_units === plan.metrics.total_fulfilled_units &&
+        currentPlan.recommendations.length === plan.recommendations.length
+      );
+
+      const runTime = new Date(plan.created_at || Date.now()).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+
+      const message = isSamePlan
+        ? `Optimization completed fresh (Run ID: ${plan.run_id} in ${plan.metrics.solver_runtime_ms}ms at ${runTime}). The optimal allocation is unchanged from the previous run.`
+        : `OR-Tools MIP completed fresh (Run ID: ${plan.run_id} in ${plan.metrics.solver_runtime_ms}ms at ${runTime}) with ${plan.metrics.fulfillment_rate_pct}% fulfillment on Real M5 retail data (${targetHorizon}D horizon).`;
+
+      // Update state with guaranteed fresh object references
+      setCurrentPlan({ ...plan, recommendations: [...plan.recommendations] });
       setActiveStrategy('optimized_ortools');
       setCurrentPage(1);
+      setExecutionCount(prev => prev + 1);
+      setJustUpdated(true);
+      setTimeout(() => setJustUpdated(false), 1200);
+
       if (onPlanGenerated) onPlanGenerated(plan);
       setExecutionStatus({
         type: 'success',
-        message: `OR-Tools MIP completed in ${plan.metrics.solver_runtime_ms}ms with ${plan.metrics.fulfillment_rate_pct}% fulfillment on ${targetSource === 'm5' ? 'Real M5' : 'Synthetic FMCG'} data (${targetHorizon}D horizon).`
+        message
       });
     } catch (err: unknown) {
+      if (reqId !== activeRequestIdRef.current) return;
       console.error(err);
+      setCurrentPlan(null);
       setExecutionStatus({
         type: 'error',
         message: err instanceof Error ? err.message : 'Optimization engine failed to execute. Check local service connection.'
       });
     } finally {
-      setLoading(false);
+      if (reqId === activeRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
-  const handleRunBaseline = async () => {
+  const handleRunBaseline = async (targetHorizon = horizonDays) => {
+    const reqId = ++activeRequestIdRef.current;
     setLoading(true);
     setExecutionStatus(null);
     try {
-      const plan = await runBaselinePlan(horizonDays, dataSource);
-      setCurrentPlan(plan);
+      const plan = await runBaselinePlan(targetHorizon, 'm5');
+      if (reqId !== activeRequestIdRef.current) return;
+
+      const runTime = new Date(plan.created_at || Date.now()).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+
+      setCurrentPlan({ ...plan, recommendations: [...plan.recommendations] });
       setActiveStrategy('baseline');
       setCurrentPage(1);
+      setExecutionCount(prev => prev + 1);
+      setJustUpdated(true);
+      setTimeout(() => setJustUpdated(false), 1200);
+
       if (onPlanGenerated) onPlanGenerated(plan);
       setExecutionStatus({
         type: 'success',
-        message: `Greedy heuristic baseline computed in ${plan.metrics.solver_runtime_ms}ms with ${plan.metrics.fulfillment_rate_pct}% fulfillment on ${dataSource === 'm5' ? 'Real M5' : 'Synthetic FMCG'} data (${horizonDays}D horizon).`
+        message: `Greedy heuristic baseline computed fresh (Run ID: ${plan.run_id} in ${plan.metrics.solver_runtime_ms}ms at ${runTime}) with ${plan.metrics.fulfillment_rate_pct}% fulfillment on Real M5 retail data (${targetHorizon}D horizon).`
       });
     } catch (err: unknown) {
+      if (reqId !== activeRequestIdRef.current) return;
       console.error(err);
+      setCurrentPlan(null);
       setExecutionStatus({
         type: 'error',
         message: err instanceof Error ? err.message : 'Baseline computation failed. Check service connection.'
       });
     } finally {
-      setLoading(false);
+      if (reqId === activeRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
-  // Re-run optimizer when data source changes
+  // Initial optimization run on mount
   useEffect(() => {
-    handleRunOptimizer(horizonDays, dataSource);
-  }, [dataSource]);
+    handleRunOptimizer(horizonDays, 'm5');
+  }, []);
 
-  // Handle Horizon change
+  // Handle Horizon change: reset currentPlan to avoid retaining stale allocations, and dispatch new request
   const handleHorizonChange = (h: number) => {
     setHorizonDays(h);
-    handleRunOptimizer(h, dataSource);
+    setCurrentPlan(null);
+    if (activeStrategy === 'baseline') {
+      handleRunBaseline(h);
+    } else {
+      handleRunOptimizer(h, 'm5');
+    }
   };
 
   // Filtered & Sorted Recommendations
@@ -251,37 +307,19 @@ export const OptimizationConsole: React.FC<OptimizationConsoleProps> = ({
 
           {/* Controls toolbar */}
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Data Source Switcher */}
-            {onDataSourceChange && (
-              <div className="flex items-center gap-1 bg-[#F7F7F4] border border-[#E5E6E0] p-1 rounded-lg text-xs font-medium">
-                <span className="text-[10px] uppercase font-bold text-[#70736E] px-2 hidden sm:inline flex items-center gap-1">
-                  <Database className="w-3 h-3 text-[#526B50]" />
-                  <span>Data:</span>
-                </span>
-                <button
-                  onClick={() => onDataSourceChange('synthetic')}
-                  disabled={loading}
-                  className={`px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer ${
-                    dataSource === 'synthetic'
-                      ? 'bg-white text-[#191B19] shadow-xs font-semibold'
-                      : 'text-[#70736E] hover:text-[#191B19]'
-                  }`}
-                  title="Deterministic FMCG Indian multi-echelon network"
-                >
-                  Synthetic FMCG
-                </button>
-                <button
-                  onClick={() => onDataSourceChange('m5')}
-                  disabled={loading}
-                  className={`px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer ${
-                    dataSource === 'm5'
-                      ? 'bg-white text-[#526B50] shadow-xs font-semibold'
-                      : 'text-[#70736E] hover:text-[#191B19]'
-                  }`}
-                  title="Official Walmart M5 competition dataset"
-                >
-                  Real M5 Kaggle
-                </button>
+            {/* Real M5 Kaggle Indicator */}
+            <div className="flex items-center gap-1.5 bg-[#F7F7F4] border border-[#E5E6E0] px-2.5 py-1 rounded-lg text-xs font-semibold text-[#526B50]">
+              <Database className="w-3.5 h-3.5 text-[#526B50]" />
+              <span>Real M5 Kaggle Data</span>
+            </div>
+
+            {/* Run ID & Timestamp Indicator */}
+            {currentPlan && (
+              <div className={`hidden md:flex items-center gap-1.5 bg-[#F7F7F4] border border-[#E5E6E0] px-2.5 py-1 rounded-lg text-xs font-mono text-[#70736E] transition-all duration-300 ${justUpdated ? 'bg-[#EBF1EA] text-[#526B50] border-[#D3DFD2]' : ''}`}>
+                <Clock className="w-3.5 h-3.5 text-[#70736E]" />
+                <span className="font-semibold text-[#191B19]">{currentPlan.run_id}</span>
+                <span>•</span>
+                <span>{new Date(currentPlan.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
               </div>
             )}
 
@@ -309,7 +347,7 @@ export const OptimizationConsole: React.FC<OptimizationConsoleProps> = ({
 
             {/* Run Baseline */}
             <button
-              onClick={handleRunBaseline}
+              onClick={() => handleRunBaseline(horizonDays)}
               disabled={loading}
               className={`h-9 px-3.5 rounded-lg border text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                 activeStrategy === 'baseline'
@@ -446,20 +484,30 @@ export const OptimizationConsole: React.FC<OptimizationConsoleProps> = ({
           </div>
 
           {/* 5. Solver Runtime & Status */}
-          <div className="p-3.5 rounded-xl bg-white border border-[#E5E6E0] shadow-2xs flex flex-col justify-between col-span-2 sm:col-span-1">
+          <div className={`p-3.5 rounded-xl bg-white border border-[#E5E6E0] shadow-2xs flex flex-col justify-between col-span-2 sm:col-span-1 transition-all duration-300 ${justUpdated ? 'ring-2 ring-[#526B50]/40' : ''}`}>
             <div>
-              <div className="text-[11px] font-semibold text-[#70736E] uppercase tracking-wider">
-                Solver Runtime
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-semibold text-[#70736E] uppercase tracking-wider">
+                  Solver Runtime
+                </div>
+                <span className="text-[10px] font-mono text-[#70736E] bg-[#F7F7F4] px-1.5 py-0.5 rounded border border-[#E5E6E0]" title={`Execution Run ID: ${currentPlan.run_id}`}>
+                  {currentPlan.run_id}
+                </span>
               </div>
               <div className="text-xl sm:text-2xl font-bold font-mono text-[#191B19] mt-1 tracking-tight">
                 {currentPlan.metrics.solver_runtime_ms} ms
               </div>
             </div>
-            <div className="text-[11px] font-medium text-[#526B50] mt-1 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#526B50]" />
-              <span>{currentPlan.metrics.solver_status || 'OPTIMAL'}</span>
-              <span className="text-[#70736E] font-normal">
-                ({activeStrategy === 'optimized_ortools' ? 'OR-Tools' : 'Baseline'})
+            <div className="text-[11px] font-medium text-[#526B50] mt-1 flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#526B50]" />
+                <span>{currentPlan.metrics.solver_status || 'OPTIMAL'}</span>
+                <span className="text-[#70736E] font-normal">
+                  ({activeStrategy === 'optimized_ortools' ? 'OR-Tools' : 'Baseline'})
+                </span>
+              </span>
+              <span className="text-[10px] text-[#70736E] font-mono hidden sm:inline">
+                {new Date(currentPlan.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
               </span>
             </div>
           </div>
@@ -471,7 +519,7 @@ export const OptimizationConsole: React.FC<OptimizationConsoleProps> = ({
         {/* Table Toolbar & Multi-Filters */}
         <div className="p-4 sm:p-5 border-b border-[#F0F0EB] flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
               <h3 className="text-base font-bold text-[#191B19]">
                 Recommended Shipment Allocations
               </h3>
@@ -483,8 +531,16 @@ export const OptimizationConsole: React.FC<OptimizationConsoleProps> = ({
                 {activeStrategy === 'optimized_ortools' ? 'OR-Tools Optimal' : 'Baseline Heuristic'}
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#F7F7F4] text-[#70736E] font-medium border border-[#E5E6E0]">
-                {dataSource === 'm5' ? 'Real M5' : 'Synthetic FMCG'} • {horizonDays}D
+                Real M5 Retail Data • {horizonDays}D
               </span>
+              {currentPlan && (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#F7F7F4] text-[#70736E] font-medium border border-[#E5E6E0] hidden sm:inline-flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#526B50]" />
+                  <span className="font-semibold text-[#191B19]">{currentPlan.run_id}</span>
+                  <span>•</span>
+                  <span>{new Date(currentPlan.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                </span>
+              )}
             </div>
             <p className="text-xs text-[#70736E] mt-0.5">
               Showing {processedRecs.length} of {currentPlan?.recommendations.length || 0} allocation legs based on current network constraints.
@@ -519,6 +575,21 @@ export const OptimizationConsole: React.FC<OptimizationConsoleProps> = ({
                 <option value="all">All Destinations</option>
                 {destinations.map(d => (
                   <option key={d.id} value={d.id}>{d.name.slice(0, 24)} ({d.id})</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filter Product */}
+            <div className="flex items-center gap-1 bg-[#F7F7F4] border border-[#E5E6E0] rounded-lg px-2 py-1 text-xs text-[#70736E]">
+              <select
+                value={filterProd}
+                aria-label="Filter by Product"
+                onChange={(e) => { setFilterProd(e.target.value); setCurrentPage(1); }}
+                className="bg-transparent text-xs text-[#191B19] focus:outline-hidden cursor-pointer"
+              >
+                <option value="all">All Products</option>
+                {products.map(p => (
+                  <option key={p.id} value={p.id}>{p.name.slice(0, 24)} ({p.id})</option>
                 ))}
               </select>
             </div>
@@ -592,7 +663,22 @@ export const OptimizationConsole: React.FC<OptimizationConsoleProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F0F0EB]">
-              {paginatedRecs.length === 0 ? (
+              {loading && !currentPlan ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-[#70736E]">
+                    <div className="w-7 h-7 border-2 border-[#526B50] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                    <p className="text-xs font-semibold text-[#191B19]">Solving OR-Tools MIP for Real M5 network...</p>
+                  </td>
+                </tr>
+              ) : !currentPlan ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-[#70736E]">
+                    <Package className="w-6 h-6 mx-auto mb-2 text-[#A5A8A0]" />
+                    <p className="text-xs font-semibold text-[#191B19]">No active optimization plan.</p>
+                    <p className="text-[11px] text-[#70736E] mt-1">Click &quot;Run OR-Tools Optimizer&quot; to execute MILP distribution.</p>
+                  </td>
+                </tr>
+              ) : paginatedRecs.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-10 text-center text-[#70736E]">
                     <Package className="w-6 h-6 mx-auto mb-2 text-[#A5A8A0]" />

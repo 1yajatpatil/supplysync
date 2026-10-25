@@ -1,4 +1,4 @@
-import { Product, Warehouse, Destination, InventoryBatch, Route, DemandRecord, OptimizationPlan, ComparisonAudit } from './api';
+import type { OptimizationPlan, ComparisonAudit } from './api';
 
 export const FALLBACK_MASTER_DATA = {
   products: [

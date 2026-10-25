@@ -1,31 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  BarChart3, 
-  TrendingUp, 
-  Sparkles, 
-  CheckCircle2, 
-  Sliders, 
-  Calendar,
-  Database,
-  Info,
-  Clock
-} from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { Product, Destination, DemandRecord, fetchForecast, ForecastResult } from '../api';
 
 interface DemandForecasterProps {
   products: Product[];
   destinations: Destination[];
   demandRecords: DemandRecord[];
-  dataSource?: 'synthetic' | 'm5';
-  onDataSourceChange?: (source: 'synthetic' | 'm5') => void;
+  dataSource?: 'm5';
 }
 
 export const DemandForecaster: React.FC<DemandForecasterProps> = ({
   products,
   destinations,
   demandRecords,
-  dataSource = 'synthetic',
-  onDataSourceChange
+  dataSource: _dataSource = 'm5'
 }) => {
   const [selectedProduct, setSelectedProduct] = useState<string>(products[0]?.id || '');
   const [selectedDestination, setSelectedDestination] = useState<string>(destinations[0]?.id || '');
@@ -38,13 +26,13 @@ export const DemandForecaster: React.FC<DemandForecasterProps> = ({
     if (products.length > 0 && (!selectedProduct || !products.some(p => p.id === selectedProduct))) {
       setSelectedProduct(products[0].id);
     }
-  }, [products]);
+  }, [products, selectedProduct]);
 
   useEffect(() => {
     if (destinations.length > 0 && (!selectedDestination || !destinations.some(d => d.id === selectedDestination))) {
       setSelectedDestination(destinations[0].id);
     }
-  }, [destinations]);
+  }, [destinations, selectedDestination]);
 
   useEffect(() => {
     let isMounted = true;
@@ -52,7 +40,7 @@ export const DemandForecaster: React.FC<DemandForecasterProps> = ({
       if (!selectedProduct || !selectedDestination) return;
       setLoading(true);
       try {
-        const res = await fetchForecast(selectedProduct, selectedDestination, horizonDays, dataSource);
+        const res = await fetchForecast(selectedProduct, selectedDestination, horizonDays, 'm5');
         if (isMounted) setForecast(res);
       } catch (err) {
         console.error(err);
@@ -62,7 +50,7 @@ export const DemandForecaster: React.FC<DemandForecasterProps> = ({
     }
     loadForecast();
     return () => { isMounted = false; };
-  }, [selectedProduct, selectedDestination, horizonDays, dataSource]);
+  }, [selectedProduct, selectedDestination, horizonDays]);
 
   const activeProduct = products.find(p => p.id === selectedProduct);
   const activeDest = destinations.find(d => d.id === selectedDestination);
@@ -76,36 +64,15 @@ export const DemandForecaster: React.FC<DemandForecasterProps> = ({
       <div className="p-4 sm:p-5 rounded-xl bg-white border border-[#E5E6E0] shadow-xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3">
-            {/* Data Source Selector */}
-            {onDataSourceChange && (
-              <div>
-                <label className="block text-[10px] font-bold text-[#70736E] uppercase tracking-wider mb-1">
-                  Data Stream
-                </label>
-                <div className="flex items-center gap-1 bg-[#F7F7F4] border border-[#E5E6E0] p-1 rounded-lg text-xs font-medium">
-                  <button
-                    onClick={() => onDataSourceChange('synthetic')}
-                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                      dataSource === 'synthetic'
-                        ? 'bg-white text-[#191B19] shadow-xs font-semibold'
-                        : 'text-[#70736E] hover:text-[#191B19]'
-                    }`}
-                  >
-                    Synthetic FMCG
-                  </button>
-                  <button
-                    onClick={() => onDataSourceChange('m5')}
-                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                      dataSource === 'm5'
-                        ? 'bg-white text-[#526B50] shadow-xs font-semibold'
-                        : 'text-[#70736E] hover:text-[#191B19]'
-                    }`}
-                  >
-                    Real M5 Kaggle
-                  </button>
-                </div>
+            {/* Real M5 Kaggle Indicator */}
+            <div>
+              <label className="block text-[10px] font-bold text-[#70736E] uppercase tracking-wider mb-1">
+                Data Stream
+              </label>
+              <div className="flex items-center gap-1.5 bg-[#F7F7F4] border border-[#E5E6E0] px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[#526B50]">
+                <span>Real M5 Kaggle (Walmart Historical)</span>
               </div>
-            )}
+            </div>
 
             {/* Product Selector */}
             <div>
@@ -164,7 +131,7 @@ export const DemandForecaster: React.FC<DemandForecasterProps> = ({
 
           <div className="flex items-center gap-2 text-xs text-[#526B50] font-medium bg-[#EBF1EA]/60 border border-[#D3DFD2] px-3 py-1.5 rounded-lg self-start lg:self-auto">
             <Sparkles className="w-3.5 h-3.5 text-[#526B50]" />
-            <span>Chronological Holdout Backtesting • Zero Lookahead</span>
+            <span>{loading ? 'Evaluating Backtest...' : `Chronological Backtesting • ${activeDest?.name || 'Zero Lookahead'}`}</span>
           </div>
         </div>
       </div>
@@ -244,7 +211,7 @@ export const DemandForecaster: React.FC<DemandForecasterProps> = ({
               Regional Demand Distribution: {activeProduct?.name}
             </h4>
             <p className="text-xs text-[#70736E] mt-0.5">
-              Projected consumption requirements across destinations over the {horizonDays}-day planning horizon ({dataSource === 'm5' ? 'Real M5 Data' : 'Synthetic FMCG'}).
+              Projected consumption requirements across destinations over the {horizonDays}-day planning horizon (Real M5 Data).
             </p>
           </div>
           <span className="text-[10px] px-2.5 py-1 rounded-full bg-[#F7F7F4] text-[#70736E] border border-[#E5E6E0] font-medium self-start sm:self-auto">

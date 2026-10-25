@@ -1,5 +1,5 @@
 import React from 'react';
-import { Warehouse as WarehouseIcon, Store, Truck, MapPin, ArrowRight } from 'lucide-react';
+import { Warehouse as WarehouseIcon, Store, Truck, ArrowRight } from 'lucide-react';
 import { Warehouse, Destination, Route, Product } from '../api';
 
 interface NetworkOverviewProps {
@@ -54,7 +54,7 @@ export const NetworkOverview: React.FC<NetworkOverviewProps> = ({
             <span className="w-2 h-2 rounded-full bg-[#526B50]" />
           </div>
           <div className="text-2xl font-bold text-[#191B19]">{products.length} Products</div>
-          <div className="text-xs text-[#70736E] mt-1">Dairy, Staples, Snacks, Oils & Personal Care</div>
+          <div className="text-xs text-[#70736E] mt-1">Foods, Hobbies & Household Categories (M5 Retail)</div>
         </div>
       </div>
 
@@ -62,9 +62,9 @@ export const NetworkOverview: React.FC<NetworkOverviewProps> = ({
       <div className="p-6 rounded-2xl bg-white border border-[#E5E6E0] shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
-            <h3 className="text-lg font-bold text-[#191B19]">Multi-Echelon FMCG Distribution Topology</h3>
+            <h3 className="text-lg font-bold text-[#191B19]">Multi-Echelon Retail Distribution Topology (M5 Network)</h3>
             <p className="text-xs text-[#70736E]">
-              Regional warehouses supply customer destinations across defined transportation corridors with variable freight tariffs and route capacities.
+              Regional warehouses supply Walmart store destinations across defined transportation corridors with variable freight tariffs and route capacities.
             </p>
           </div>
           <button

@@ -64,23 +64,24 @@ def evaluate_forecasting_models(
     product_id: str,
     destination_id: str,
     horizon_days: int = 7,
-    data_source: str = "synthetic"
+    data_source: str = "m5"
 ) -> Dict[str, Any]:
     """
-    Performs chronological backtesting on historical demand series (synthetic FMCG or real M5 data).
+    Performs chronological backtesting on historical demand series from Real M5 retail sales data.
     Uses chronological train/test split, computes MAE, RMSE, and WAPE, and projects the requested horizon.
     """
-    # 1. Retrieve historical daily time-series
-    if data_source == "m5":
-        loader = M5DataLoader()
-        try:
-            history = loader.load_time_series(product_id, destination_id)
-        except Exception:
-            # Fallback if specific pair missing
-            history = generate_synthetic_historical_series(product_id, destination_id, days=60)
-            data_source = "synthetic_fallback"
-    else:
-        history = generate_synthetic_historical_series(product_id, destination_id, days=60)
+    if data_source.lower() in ("synthetic", "fmcg", "demo"):
+        raise ValueError("Synthetic demand data is deprecated. SupplySync operates exclusively on Real M5 retail data.")
+
+    # 1. Retrieve historical daily time-series strictly from M5 dataset
+    loader = M5DataLoader()
+    try:
+        history = loader.load_time_series(product_id, destination_id)
+    except Exception as e:
+        raise KeyError(
+            f"Product '{product_id}' at store '{destination_id}' was not found in the M5 dataset: {str(e)}. "
+            f"Synthetic fallback is disabled."
+        )
 
     total_days = len(history)
     if total_days < 14:
@@ -197,12 +198,14 @@ def generate_forecasted_demand_records(
     products: List[Product],
     destinations: List[Destination],
     horizon_days: int = 7,
-    data_source: str = "synthetic"
+    data_source: str = "m5"
 ) -> List[DemandRecord]:
     """
     Computes forecasted demand for every (destination, product) pair for the exact horizon (7D, 14D, 30D).
-    This function bridges the forecasting service directly into the optimization pipeline!
+    Bridges the Real M5 forecasting service directly into the optimization pipeline.
     """
+    if data_source.lower() in ("synthetic", "fmcg", "demo"):
+        raise ValueError("Synthetic demand forecasting is deprecated. SupplySync operates exclusively on Real M5 retail sales data.")
     records = []
     
     for dest in destinations:

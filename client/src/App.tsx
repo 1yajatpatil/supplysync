@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { LandingPage } from './components/LandingPage';
+import { PlanningWizard } from './components/PlanningWizard';
 import { NetworkOverview } from './components/NetworkOverview';
 import { InventoryManager } from './components/InventoryManager';
 import { DemandForecaster } from './components/DemandForecaster';
 import { OptimizationConsole } from './components/OptimizationConsole';
 import { ComparisonAuditView } from './components/ComparisonAuditView';
+import { AuthModal } from './components/AuthModal';
+import { UserProfileMenu } from './components/UserProfileMenu';
+import { useAuth } from './context/AuthContext';
 import { 
   Box, 
-  ArrowLeft, 
-  Database,
-  CheckCircle2,
-  AlertCircle
+  ArrowLeft,
+  Plus
 } from 'lucide-react';
 import { 
   fetchMasterData, 
@@ -25,9 +27,9 @@ import {
 } from './api';
 
 export function App() {
-  const [currentView, setCurrentView] = useState<'landing' | 'app'>('landing');
+  const { requireAuth } = useAuth();
+  const [currentView, setCurrentView] = useState<'landing' | 'wizard' | 'app'>('landing');
   const [activeTab, setActiveTab] = useState<'overview' | 'inventory' | 'demand' | 'optimization' | 'comparison'>('overview');
-  const [dataSource, setDataSource] = useState<'synthetic' | 'm5'>('synthetic');
 
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseType[]>([]);
@@ -36,12 +38,17 @@ export function App() {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [demand, setDemand] = useState<DemandRecord[]>([]);
   const [loadingData, setLoadingData] = useState<boolean>(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [datasetStatus, setDatasetStatus] = useState<DatasetStatus | null>(null);
 
   useEffect(() => {
     async function loadStatus() {
-      const status = await fetchDatasetStatus();
-      setDatasetStatus(status);
+      try {
+        const status = await fetchDatasetStatus();
+        setDatasetStatus(status);
+      } catch (err: any) {
+        console.warn('Dataset status retrieval error:', err);
+      }
     }
     loadStatus();
   }, []);
@@ -49,41 +56,82 @@ export function App() {
   useEffect(() => {
     async function loadData() {
       setLoadingData(true);
+      setErrorMessage(null);
       try {
-        const data = await fetchMasterData(dataSource, 7);
+        const data = await fetchMasterData('m5', 7);
         setProducts(data.products || []);
         setWarehouses(data.warehouses || []);
         setDestinations(data.destinations || []);
         setBatches(data.batches || []);
         setRoutes(data.routes || []);
         setDemand(data.demand || []);
-      } catch (e) {
-        console.error("Failed to load master data", e);
+      } catch (e: any) {
+        console.error("Failed to load Real M5 master data", e);
+        setErrorMessage(e.message || "Failed to connect to backend engine for Real M5 data.");
       } finally {
         setLoadingData(false);
       }
     }
     loadData();
-  }, [dataSource]);
+  }, []);
 
   if (currentView === 'landing') {
     return (
-      <LandingPage 
-        onStartDemo={(tab) => {
-          if (tab) setActiveTab(tab);
-          setCurrentView('app');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
-        onExploreFeatures={() => {
-          const el = document.getElementById('features');
-          if (el) el.scrollIntoView({ behavior: 'smooth' });
-        }}
-      />
+      <>
+        <LandingPage 
+          onGetStarted={() => {
+            requireAuth(() => {
+              setCurrentView('wizard');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+          }}
+          onStartDemo={(tab) => {
+            requireAuth(() => {
+              if (tab) setActiveTab(tab);
+              setCurrentView('app');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+          }}
+          onExploreFeatures={() => {
+            const el = document.getElementById('features');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }}
+        />
+        <AuthModal />
+      </>
+    );
+  }
+
+  if (currentView === 'wizard') {
+    return (
+      <>
+        <PlanningWizard
+          onCancel={() => {
+            setCurrentView('landing');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          onOpenAdvancedDashboard={(_plan) => {
+            setActiveTab('optimization');
+            setCurrentView('app');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          m5Data={{
+            products,
+            warehouses,
+            destinations,
+            batches,
+            routes,
+            demand
+          }}
+        />
+        <AuthModal />
+      </>
     );
   }
 
   return (
     <div className="min-h-screen bg-[#F7F7F4] text-[#191B19] flex flex-col font-sans">
+      <AuthModal />
       {/* Top Application Header */}
       <header className="sticky top-0 z-40 bg-[#F7F7F4]/95 backdrop-blur-md border-b border-[#E5E6E0]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
@@ -95,6 +143,17 @@ export function App() {
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Back to Home</span>
+            </button>
+
+            <button
+              onClick={() => {
+                requireAuth(() => setCurrentView('wizard'));
+              }}
+              className="flex items-center gap-1.5 text-xs font-semibold text-[#526B50] hover:text-[#41553F] transition-colors px-2.5 py-1 rounded-lg border border-[#D3DFD2] bg-[#EBF1EA] cursor-pointer shrink-0"
+              title="Start a new planning run or upload custom data"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>New Planning Run</span>
             </button>
 
             <div className="h-4 w-px bg-[#E5E6E0] hidden sm:block" />
@@ -155,39 +214,33 @@ export function App() {
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* Global Data Stream Selector */}
-            <div className="flex items-center gap-1 bg-[#EBECE6] p-0.5 rounded-lg text-[11px] font-medium border border-[#E5E6E0]">
-              <button
-                onClick={() => setDataSource('synthetic')}
-                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
-                  dataSource === 'synthetic' 
-                    ? 'bg-white text-[#191B19] shadow-xs font-semibold' 
-                    : 'text-[#70736E] hover:text-[#191B19]'
-                }`}
-                title="Switch to Synthetic FMCG Indian multi-echelon network"
-              >
-                FMCG Demo
-              </button>
-              <button
-                onClick={() => setDataSource('m5')}
-                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
-                  dataSource === 'm5' 
-                    ? 'bg-white text-[#526B50] shadow-xs font-semibold' 
-                    : 'text-[#70736E] hover:text-[#191B19]'
-                }`}
-                title="Switch to Real Walmart M5 Forecasting competition dataset"
-              >
-                Real M5
-              </button>
+            {/* Real M5 Kaggle Dataset Badge */}
+            <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg text-xs font-semibold text-emerald-800 shadow-2xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+              <span>REAL M5 KAGGLE DATA</span>
             </div>
+
+            {datasetStatus && (
+              <span className="hidden xl:inline-flex items-center gap-1 text-[11px] text-[#70736E] bg-white border border-[#E5E6E0] px-2 py-0.5 rounded-full" title="Walmart historical retail sales dataset">
+                <span>{datasetStatus.active_source === 'sample' ? 'Walmart Historical Sample (90D)' : 'Walmart Full Dataset'}</span>
+              </span>
+            )}
 
             {/* Solver Status Pill */}
             <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-[#526B50] font-semibold bg-white border border-[#E5E6E0] px-2.5 py-1 rounded-full shadow-2xs">
               <span className="w-1.5 h-1.5 rounded-full bg-[#526B50] animate-pulse" />
               <span>OR-Tools MILP Online</span>
             </span>
+
+            {/* Authenticated User Menu */}
+            <UserProfileMenu />
           </div>
         </div>
+        {loadingData && (
+          <div className="h-0.5 w-full bg-[#EBF1EA] overflow-hidden">
+            <div className="h-full bg-[#526B50] animate-pulse w-full" />
+          </div>
+        )}
       </header>
 
       {/* Mobile Tab Navigation */}
@@ -226,6 +279,15 @@ export function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 py-6 w-full">
+        {errorMessage && (
+          <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 text-red-800 text-sm flex items-center justify-between">
+            <div>
+              <p className="font-semibold">Backend Connection Issue</p>
+              <p className="text-xs text-red-700 mt-0.5">{errorMessage}</p>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'overview' && (
           <NetworkOverview
             warehouses={warehouses}
@@ -249,8 +311,7 @@ export function App() {
             products={products}
             destinations={destinations}
             demandRecords={demand}
-            dataSource={dataSource}
-            onDataSourceChange={setDataSource}
+            dataSource="m5"
           />
         )}
 
@@ -259,16 +320,14 @@ export function App() {
             products={products}
             warehouses={warehouses}
             destinations={destinations}
-            dataSource={dataSource}
-            onDataSourceChange={setDataSource}
+            dataSource="m5"
             onNavigateToComparison={() => setActiveTab('comparison')}
           />
         )}
 
         {activeTab === 'comparison' && (
           <ComparisonAuditView 
-            dataSource={dataSource}
-            onDataSourceChange={setDataSource}
+            dataSource="m5"
           />
         )}
       </main>

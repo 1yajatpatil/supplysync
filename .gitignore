@@ -23,6 +23,10 @@ out/
 .env.production.local
 *.pem
 *.key
+*.db
+*.db-shm
+*.db-wal
+data/*.db*
 
 # Operating system & IDE
 .DS_Store

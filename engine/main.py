@@ -10,7 +10,7 @@ import csv
 from typing import List, Dict, Optional, Any
 from fastapi import FastAPI, HTTPException, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from .models import (
     Product, 
@@ -41,7 +41,7 @@ from .m5_logistics import (
 from .demand import evaluate_forecasting_models, generate_forecasted_demand_records
 from .baseline import run_baseline_allocation
 from .optimizer import run_ortools_optimization
-from .validator import validate_plan_invariants
+from .validator import validate_plan_invariants, validate_input_dataset
 from .comparator import compare_plans
 
 app = FastAPI(
@@ -63,39 +63,39 @@ app.add_middleware(
 RUNS_STORE: Dict[str, OptimizationPlan] = {}
 
 
-def get_dataset_bundle(data_source: str = "synthetic", horizon_days: int = 7):
+def get_dataset_bundle(data_source: str = "m5", horizon_days: int = 7):
     """
-    Retrieves the complete data network for the specified data source and planning horizon.
+    Retrieves the complete data network for the Real M5 retail sales dataset and planning horizon.
     Generates genuine demand forecasts scaled to the requested horizon (7D, 14D, 30D).
+    Synthetic data is rejected; Real M5 Kaggle data is the exclusive data source.
     """
-    if data_source == "m5":
-        loader = M5DataLoader()
-        products = get_m5_products(loader)
-        destinations = get_m5_destinations(loader)
-        warehouses = get_m5_warehouses()
-        routes = get_m5_routes(destinations, warehouses)
-        batches = get_m5_inventory_batches(products, warehouses)
-        demand = generate_forecasted_demand_records(
-            products=products,
-            destinations=destinations,
-            horizon_days=horizon_days,
-            data_source="m5"
+    if data_source.lower() in ("synthetic", "fmcg", "demo"):
+        raise HTTPException(
+            status_code=400,
+            detail="Synthetic FMCG data has been deprecated and removed. SupplySync operates exclusively on Real M5 retail sales data."
         )
-        return products, warehouses, destinations, batches, routes, demand
-    else:
-        products = get_demo_products()
-        warehouses = get_demo_warehouses()
-        destinations = get_demo_destinations()
-        batches = get_demo_inventory_batches()
-        routes = get_demo_routes()
-        # Scale demand forecasts according to planning horizon
-        demand = generate_forecasted_demand_records(
-            products=products,
-            destinations=destinations,
-            horizon_days=horizon_days,
-            data_source="synthetic"
+
+    m5_status = get_m5_status()
+    if not m5_status.get("available", False):
+        missing = [f for f in ("sales_train_validation.csv", "calendar.csv", "sell_prices.csv") if f not in m5_status.get("files_present", [])]
+        raise HTTPException(
+            status_code=503,
+            detail=f"Required M5 dataset files (sales_train_validation.csv, calendar.csv, sell_prices.csv) are missing or unreadable in data/m5: {missing}. Please provide required M5 dataset files."
         )
-        return products, warehouses, destinations, batches, routes, demand
+
+    loader = M5DataLoader()
+    products = get_m5_products(loader)
+    destinations = get_m5_destinations(loader)
+    warehouses = get_m5_warehouses()
+    routes = get_m5_routes(destinations, warehouses)
+    batches = get_m5_inventory_batches(products, warehouses)
+    demand = generate_forecasted_demand_records(
+        products=products,
+        destinations=destinations,
+        horizon_days=horizon_days,
+        data_source="m5"
+    )
+    return products, warehouses, destinations, batches, routes, demand
 
 
 @app.get("/health")
@@ -105,6 +105,7 @@ def health_check():
         "status": "healthy",
         "service": "SupplySync Optimization & Forecasting Engine",
         "solver": "Google OR-Tools SCIP MILP",
+        "dataset": "Real M5 Kaggle Retail Data",
         "m5_available": m5_info.get("available", False),
         "m5_source": m5_info.get("active_source", "none"),
         "version": "1.1.0"
@@ -121,11 +122,11 @@ def dataset_status():
 
 @app.get("/api/master-data")
 def get_master_data(
-    data_source: str = Query("synthetic", description="'synthetic' or 'm5'"),
+    data_source: str = Query("m5", description="Dataset source: 'm5' (exclusive)"),
     horizon: int = Query(7, description="Planning horizon days (7, 14, 30)")
 ):
     """
-    Returns the complete FMCG master dataset including products, warehouses,
+    Returns the complete Real M5 master dataset including products, warehouses,
     destinations, inventory batches with expiry dates, routes, and demand records.
     """
     products, warehouses, destinations, batches, routes, demand = get_dataset_bundle(data_source, horizon)
@@ -136,7 +137,7 @@ def get_master_data(
         "batches": batches,
         "routes": routes,
         "demand": demand,
-        "data_source": data_source,
+        "data_source": "m5",
         "horizon_days": horizon
     }
 
@@ -145,31 +146,125 @@ class ForecastRequest(BaseModel):
     product_id: str
     destination_id: str
     horizon_days: int = 7
-    data_source: str = "synthetic"
+    data_source: str = "m5"
 
 
 @app.post("/api/forecast")
 def get_forecast(req: ForecastRequest):
     """
-    Evaluates chronological demand forecasting models and returns projections.
+    Evaluates chronological demand forecasting models on Real M5 sales records and returns projections.
     """
+    if req.data_source.lower() in ("synthetic", "fmcg", "demo"):
+        raise HTTPException(
+            status_code=400,
+            detail="Synthetic demand forecasting is deprecated. Real M5 data is the exclusive source."
+        )
     return evaluate_forecasting_models(
         product_id=req.product_id,
         destination_id=req.destination_id,
         horizon_days=req.horizon_days,
-        data_source=req.data_source
+        data_source="m5"
+    )
+
+
+class DatasetValidationRequest(BaseModel):
+    products: List[Dict[str, Any]] = []
+    warehouses: List[Dict[str, Any]] = []
+    destinations: List[Dict[str, Any]] = []
+    batches: List[Dict[str, Any]] = []
+    routes: List[Dict[str, Any]] = []
+    demand_records: List[Dict[str, Any]] = []
+
+
+@app.post("/api/dataset/validate")
+def validate_dataset_endpoint(req: DatasetValidationRequest):
+    """
+    Performs authoritative pre-optimization data validation on uploaded/candidate datasets.
+    """
+    return validate_input_dataset(
+        products=req.products,
+        warehouses=req.warehouses,
+        destinations=req.destinations,
+        batches=req.batches,
+        routes=req.routes,
+        demand_records=req.demand_records
     )
 
 
 class OptimizationRequest(BaseModel):
     planning_horizon_days: int = 7
-    data_source: str = "synthetic"
+    data_source: str = "m5"
     custom_products: Optional[List[Product]] = None
     custom_warehouses: Optional[List[Warehouse]] = None
     custom_destinations: Optional[List[Destination]] = None
     custom_batches: Optional[List[InventoryBatch]] = None
     custom_routes: Optional[List[Route]] = None
     custom_demand: Optional[List[DemandRecord]] = None
+    custom_demand_records: Optional[List[DemandRecord]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_planning_horizon(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "custom_demand_records" in data and ("custom_demand" not in data or data["custom_demand"] is None):
+                data["custom_demand"] = data["custom_demand_records"]
+            if "planning_horizon_days" not in data or data["planning_horizon_days"] is None:
+                if "horizon_days" in data and data["horizon_days"] is not None:
+                    data["planning_horizon_days"] = int(data["horizon_days"])
+                elif "horizon" in data and data["horizon"] is not None:
+                    data["planning_horizon_days"] = int(data["horizon"])
+            elif isinstance(data.get("planning_horizon_days"), str):
+                data["planning_horizon_days"] = int(data["planning_horizon_days"])
+        return data
+
+
+def resolve_request_dataset(req: OptimizationRequest):
+    """
+    Authoritatively resolves the dataset for an optimization/baseline/comparison request.
+    Strictly distinguishes custom company data from the bundled Walmart M5 sample.
+    Never falls back to M5 or demo data when custom source is requested.
+    """
+    source_lower = (req.data_source or "m5").lower()
+
+    if source_lower in ("synthetic", "fmcg", "demo"):
+        raise HTTPException(
+            status_code=400,
+            detail="Synthetic demo data source is deprecated. Choose 'uploaded' for custom company data or 'm5' for the Walmart sample."
+        )
+
+    if source_lower in ("uploaded", "custom"):
+        # Custom dataset requested - verify all 6 entity sets are present
+        missing = []
+        if not req.custom_products or len(req.custom_products) == 0:
+            missing.append("products")
+        if not req.custom_warehouses or len(req.custom_warehouses) == 0:
+            missing.append("warehouses")
+        if not req.custom_destinations or len(req.custom_destinations) == 0:
+            missing.append("destinations")
+        if not req.custom_batches or len(req.custom_batches) == 0:
+            missing.append("batches")
+        if not req.custom_routes or len(req.custom_routes) == 0:
+            missing.append("routes")
+        if not req.custom_demand or len(req.custom_demand) == 0:
+            missing.append("demand")
+
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Incomplete custom company dataset: missing required entities ({', '.join(missing)}). SupplySync will not silently fall back to sample data."
+            )
+
+        return (
+            req.custom_products,
+            req.custom_warehouses,
+            req.custom_destinations,
+            req.custom_batches,
+            req.custom_routes,
+            req.custom_demand
+        )
+
+    # Otherwise load bundled M5 sample
+    return get_dataset_bundle(req.data_source, req.planning_horizon_days)
 
 
 @app.post("/api/baseline", response_model=OptimizationPlan)
@@ -177,17 +272,7 @@ def run_baseline(req: OptimizationRequest):
     """
     Executes the greedy demand-priority baseline distribution strategy and validates invariants.
     """
-    if req.custom_products and req.custom_warehouses and req.custom_destinations and req.custom_batches and req.custom_routes and req.custom_demand:
-        products = req.custom_products
-        warehouses = req.custom_warehouses
-        destinations = req.custom_destinations
-        batches = req.custom_batches
-        routes = req.custom_routes
-        demand = req.custom_demand
-    else:
-        products, warehouses, destinations, batches, routes, demand = get_dataset_bundle(
-            req.data_source, req.planning_horizon_days
-        )
+    products, warehouses, destinations, batches, routes, demand = resolve_request_dataset(req)
 
     plan = run_baseline_allocation(
         products=products,
@@ -196,7 +281,8 @@ def run_baseline(req: OptimizationRequest):
         batches=batches,
         routes=routes,
         demand_records=demand,
-        planning_horizon_days=req.planning_horizon_days
+        planning_horizon_days=req.planning_horizon_days,
+        data_source=req.data_source
     )
 
     # Validate physical invariants
@@ -220,17 +306,7 @@ def run_optimizer(req: OptimizationRequest):
     Executes constrained OR-Tools Mixed-Integer Programming distribution optimization
     with batch-level FEFO expiry handling, and validates all invariants.
     """
-    if req.custom_products and req.custom_warehouses and req.custom_destinations and req.custom_batches and req.custom_routes and req.custom_demand:
-        products = req.custom_products
-        warehouses = req.custom_warehouses
-        destinations = req.custom_destinations
-        batches = req.custom_batches
-        routes = req.custom_routes
-        demand = req.custom_demand
-    else:
-        products, warehouses, destinations, batches, routes, demand = get_dataset_bundle(
-            req.data_source, req.planning_horizon_days
-        )
+    products, warehouses, destinations, batches, routes, demand = resolve_request_dataset(req)
 
     try:
         plan = run_ortools_optimization(
@@ -240,7 +316,8 @@ def run_optimizer(req: OptimizationRequest):
             batches=batches,
             routes=routes,
             demand_records=demand,
-            planning_horizon_days=req.planning_horizon_days
+            planning_horizon_days=req.planning_horizon_days,
+            data_source=req.data_source
         )
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Optimization failed: {str(e)}")
@@ -266,43 +343,38 @@ def run_comparison(req: OptimizationRequest):
     Executes both baseline and OR-Tools optimizer under identical starting inputs
     and returns an objective, mathematically validated comparison audit.
     """
-    if req.custom_products and req.custom_warehouses and req.custom_destinations and req.custom_batches and req.custom_routes and req.custom_demand:
-        products = req.custom_products
-        warehouses = req.custom_warehouses
-        destinations = req.custom_destinations
-        batches = req.custom_batches
-        routes = req.custom_routes
-        demand = req.custom_demand
-    else:
-        products, warehouses, destinations, batches, routes, demand = get_dataset_bundle(
-            req.data_source, req.planning_horizon_days
+    products, warehouses, destinations, batches, routes, demand = resolve_request_dataset(req)
+
+    try:
+        baseline_plan = run_baseline_allocation(
+            products=products,
+            warehouses=warehouses,
+            destinations=destinations,
+            batches=batches,
+            routes=routes,
+            demand_records=demand,
+            planning_horizon_days=req.planning_horizon_days,
+            data_source=req.data_source
         )
+        validate_plan_invariants(baseline_plan, products, warehouses, destinations, batches, routes, demand)
+        RUNS_STORE[baseline_plan.run_id] = baseline_plan
 
-    baseline_plan = run_baseline_allocation(
-        products=products,
-        warehouses=warehouses,
-        destinations=destinations,
-        batches=batches,
-        routes=routes,
-        demand_records=demand,
-        planning_horizon_days=req.planning_horizon_days
-    )
-    validate_plan_invariants(baseline_plan, products, warehouses, destinations, batches, routes, demand)
-    RUNS_STORE[baseline_plan.run_id] = baseline_plan
+        optimized_plan = run_ortools_optimization(
+            products=products,
+            warehouses=warehouses,
+            destinations=destinations,
+            batches=batches,
+            routes=routes,
+            demand_records=demand,
+            planning_horizon_days=req.planning_horizon_days,
+            data_source=req.data_source
+        )
+        validate_plan_invariants(optimized_plan, products, warehouses, destinations, batches, routes, demand)
+        RUNS_STORE[optimized_plan.run_id] = optimized_plan
 
-    optimized_plan = run_ortools_optimization(
-        products=products,
-        warehouses=warehouses,
-        destinations=destinations,
-        batches=batches,
-        routes=routes,
-        demand_records=demand,
-        planning_horizon_days=req.planning_horizon_days
-    )
-    validate_plan_invariants(optimized_plan, products, warehouses, destinations, batches, routes, demand)
-    RUNS_STORE[optimized_plan.run_id] = optimized_plan
-
-    return compare_plans(baseline_plan, optimized_plan)
+        return compare_plans(baseline_plan, optimized_plan)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Comparison failed: {str(e)}")
 
 
 @app.get("/api/runs/{run_id}")

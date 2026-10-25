@@ -34,7 +34,8 @@ def run_baseline_allocation(
     batches: List[InventoryBatch],
     routes: List[Route],
     demand_records: List[DemandRecord],
-    planning_horizon_days: int = 7
+    planning_horizon_days: int = 7,
+    data_source: str = "m5"
 ) -> OptimizationPlan:
     """
     Executes the greedy demand-priority baseline distribution strategy.
@@ -60,10 +61,14 @@ def run_baseline_allocation(
     # Route lookup: (source_wh, dest_id) -> Route
     route_map: Dict[Tuple[str, str], Route] = {}
     route_remaining_cap: Dict[Tuple[str, str], int] = {}
+    route_remaining_weight_kg: Dict[Tuple[str, str], float] = {}
     for r in routes:
         route_map[(r.source_warehouse_id, r.destination_id)] = r
         route_remaining_cap[(r.source_warehouse_id, r.destination_id)] = (
             r.max_capacity_units if r.max_capacity_units is not None else 999999999
+        )
+        route_remaining_weight_kg[(r.source_warehouse_id, r.destination_id)] = (
+            r.max_capacity_kg if r.max_capacity_kg is not None else 999999999.0
         )
 
     # Sort destinations by tier (Tier-1 first) then by total demand
@@ -87,16 +92,27 @@ def run_baseline_allocation(
             if remaining_demand <= 0:
                 continue
 
-            # Candidate warehouses connected to this destination with stock of this product
+            # Candidate warehouses connected to this destination with eligible stock of this product
             candidate_whs = []
             for wh in warehouses:
                 route_key = (wh.id, dest.id)
-                if route_key in route_map and route_remaining_cap[route_key] > 0:
-                    # Check available stock
+                if (
+                    route_key in route_map 
+                    and route_remaining_cap[route_key] > 0
+                    and route_remaining_weight_kg[route_key] > 0
+                ):
+                    route = route_map[route_key]
+                    # Filter batches strictly by arrival shelf-life requirement
                     batch_list = wh_batches.get((wh.id, prod.id), [])
-                    wh_stock = sum(batch_inventory.get(b.batch_id, 0) for b in batch_list)
+                    eligible_batches = [
+                        b for b in batch_list 
+                        if (b.days_to_expiry - route.transit_time_days) >= prod.min_shelf_life_required_days
+                    ]
+                    # Enforce First-Expiry, First-Out (FEFO) tie-breaking
+                    eligible_batches.sort(key=lambda b: (b.days_to_expiry, b.batch_id))
+                    wh_stock = sum(batch_inventory.get(b.batch_id, 0) for b in eligible_batches)
                     if wh_stock > 0:
-                        candidate_whs.append((route_map[route_key].unit_cost, wh.id, batch_list))
+                        candidate_whs.append((route.unit_cost, wh.id, eligible_batches))
 
             # Greedy rule: Sort by lowest unit freight cost
             candidate_whs.sort(key=lambda item: item[0])
@@ -106,32 +122,56 @@ def run_baseline_allocation(
                     break
                 
                 route_key = (wh_id, dest.id)
+                route = route_map[route_key]
                 available_route_cap = route_remaining_cap[route_key]
-                if available_route_cap <= 0:
+                available_route_weight = route_remaining_weight_kg[route_key]
+                if available_route_cap <= 0 or available_route_weight <= 0:
                     continue
 
                 for b in candidate_batches:
-                    if remaining_demand <= 0 or available_route_cap <= 0:
+                    if remaining_demand <= 0 or available_route_cap <= 0 or available_route_weight <= 0:
                         break
+
+                    # Enforce arrival shelf life
+                    remaining_shelf_life_at_arrival = b.days_to_expiry - route.transit_time_days
+                    if remaining_shelf_life_at_arrival < prod.min_shelf_life_required_days:
+                        continue
                     
                     b_avail = batch_inventory.get(b.batch_id, 0)
                     if b_avail <= 0:
                         continue
 
-                    # Allocation quantity
-                    alloc_qty = min(remaining_demand, b_avail, available_route_cap)
+                    # Allocation quantity bounded by: demand, stock, unit capacity, and weight capacity
+                    max_units_by_weight = (
+                        int(available_route_weight // prod.unit_weight_kg)
+                        if prod.unit_weight_kg > 0
+                        else remaining_demand
+                    )
+                    alloc_qty = min(remaining_demand, b_avail, available_route_cap, max_units_by_weight)
                     if alloc_qty <= 0:
                         continue
 
                     line_cost = round(alloc_qty * unit_cost, 2)
+                    line_weight = round(alloc_qty * prod.unit_weight_kg, 2)
                     total_transport_cost += line_cost
 
                     # Update trackers
                     remaining_demand -= alloc_qty
                     batch_inventory[b.batch_id] -= alloc_qty
                     available_route_cap -= alloc_qty
+                    available_route_weight = max(0.0, available_route_weight - (alloc_qty * prod.unit_weight_kg))
                     route_remaining_cap[route_key] = available_route_cap
+                    route_remaining_weight_kg[route_key] = available_route_weight
                     fulfilled_per_dp[dp_key] = fulfilled_per_dp.get(dp_key, 0) + alloc_qty
+
+                    constraints_met = [
+                        "Physical stock availability",
+                        "Zero expired stock"
+                    ]
+                    if route.max_capacity_units is not None:
+                        constraints_met.append(f"Route unit capacity limit ({route.max_capacity_units} units)")
+                    if route.max_capacity_kg is not None:
+                        constraints_met.append(f"Route weight capacity limit ({route.max_capacity_kg} kg)")
 
                     recommendations.append(
                         ShipmentRecommendation(
@@ -149,11 +189,9 @@ def run_baseline_allocation(
                             destination_demand=demand_by_dp.get(dp_key, 0),
                             batch_days_to_expiry=b.days_to_expiry,
                             rationale=f"Greedy lowest direct tariff (${unit_cost:.2f}/unit) to satisfy {dest.tier} demand.",
-                            constraints_honored=[
-                                "Physical stock availability",
-                                "Route capacity limit",
-                                "Zero expired stock"
-                            ]
+                            total_weight_kg=line_weight,
+                            observed_unit_price=prod.observed_sell_price,
+                            constraints_honored=constraints_met
                         )
                     )
                     rec_counter += 1
@@ -198,6 +236,20 @@ def run_baseline_allocation(
     elapsed_ms = round((time.time() - start_time) * 1000, 2)
     fulfillment_rate = round((total_fulfilled / total_demand * 100), 2) if total_demand > 0 else 100.0
 
+    total_weight_shipped = round(sum(r.total_weight_kg for r in recommendations), 2)
+    estimated_shortage_penalty = round(
+        sum(
+            s.unmet_quantity * prod_map[s.product_id].shortage_penalty_per_unit * (1.30 if dest_map[s.destination_id].tier == "Tier-1" else 1.0)
+            for s in shortages
+        ),
+        2
+    )
+    has_observed_prices = any(p.observed_sell_price is not None for p in products)
+    observed_revenue = (
+        round(sum(r.allocated_quantity * (r.observed_unit_price or 0.0) for r in recommendations if r.observed_unit_price is not None), 2)
+        if has_observed_prices else None
+    )
+
     metrics = OptimizationMetrics(
         strategy="baseline",
         total_demand_units=total_demand,
@@ -211,8 +263,13 @@ def run_baseline_allocation(
         estimated_avoided_waste_units=expiring_stock_utilized,
         potential_waste_unallocated_units=potential_waste_unallocated,
         destinations_with_shortages=len(destinations_with_shortages_set),
+        total_weight_shipped_kg=total_weight_shipped,
+        estimated_shortage_cost=estimated_shortage_penalty,
+        observed_sales_revenue=observed_revenue,
         solver_runtime_ms=elapsed_ms,
-        solver_status="FEASIBLE_GREEDY_HEURISTIC"
+        solver_status="FEASIBLE_GREEDY_HEURISTIC",
+        total_evaluated_cost=round(total_transport_cost + estimated_shortage_penalty, 2),
+        solver_objective_value=None
     )
 
     return OptimizationPlan(
@@ -220,6 +277,7 @@ def run_baseline_allocation(
         strategy="baseline",
         created_at=datetime.now(timezone.utc).isoformat(),
         planning_horizon_days=planning_horizon_days,
+        data_source=data_source,
         metrics=metrics,
         recommendations=recommendations,
         shortages=shortages
